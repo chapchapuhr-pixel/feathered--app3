@@ -248,25 +248,19 @@ fun FeatheredTopBar(
                             )
                         }
                     } else {
-                        // User Profile Avatar: w-10 h-10 rounded-full border-2 border-[#334155]/80 bg-[#1E293B]
-                        Box(
-                            modifier = Modifier
-                                .size(40.dp)
-                                .clip(CircleShape)
-                                .background(Color(0xFF1E293B))
-                                .border(2.dp, Color(0xFF334155).copy(alpha = 0.8f), CircleShape)
-                            .clickable { onProfileClick() }
-                            .testTag("top_bar_profile_btn"),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        AsyncImage(
-                            model = currentUser.profileImageUrl,
-                            contentDescription = currentUser.name,
-                            contentScale = ContentScale.Crop,
-                            modifier = Modifier.fillMaxSize()
+                        // User Profile Avatar with Initials fallback: w-10 h-10 rounded-full
+                        FeatheredAvatar(
+                            name = currentUser.name,
+                            username = currentUser.username,
+                            imageUrl = currentUser.profileImageUrl,
+                            size = 40.dp,
+                            borderWidth = 2.dp,
+                            borderColor = Color(0xFF334155).copy(alpha = 0.8f),
+                            fontSize = 15.sp,
+                            onClick = onProfileClick,
+                            modifier = Modifier.testTag("top_bar_profile_btn")
                         )
                     }
-                }
                 }
             }
 

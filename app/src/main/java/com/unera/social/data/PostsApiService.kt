@@ -110,7 +110,7 @@ object PostsApiService {
                     val arr = JSONArray(responseText)
                     for (i in 0 until arr.length()) {
                         val obj = arr.optJSONObject(i) ?: continue
-                        parsePostJson(obj)?.let { result.add(it) }
+                        (parseFeedItemToPost(obj) ?: parsePostJson(obj))?.let { result.add(it) }
                     }
                 } else if (responseText.startsWith("{")) {
                     val root = JSONObject(responseText)
@@ -118,7 +118,7 @@ object PostsApiService {
                     if (arr != null) {
                         for (i in 0 until arr.length()) {
                             val obj = arr.optJSONObject(i) ?: continue
-                            parsePostJson(obj)?.let { result.add(it) }
+                            (parseFeedItemToPost(obj) ?: parsePostJson(obj))?.let { result.add(it) }
                         }
                     }
                 }
@@ -317,21 +317,24 @@ object PostsApiService {
         val userId = obj.optLong("user_id", obj.optLong("owner_id", 1L))
         val authorObj = obj.optJSONObject("author") ?: obj.optJSONObject("user")
 
-        val authorName = authorObj?.optString("name")?.takeIf { it.isNotBlank() }
+        val authorName = authorObj?.optString("name")?.takeIf { it.isNotBlank() && it != "null" }
+            ?: authorObj?.optString("display_name")?.takeIf { it.isNotBlank() && it != "null" }
+            ?: authorObj?.optString("username")?.takeIf { it.isNotBlank() && it != "null" }
+            ?: obj.optString("author_name").takeIf { it.isNotBlank() && it != "null" }
             ?: obj.optString("name").takeIf { it.isNotBlank() && it != "null" }
-            ?: authorObj?.optString("username")?.takeIf { it.isNotBlank() }
+            ?: obj.optString("display_name").takeIf { it.isNotBlank() && it != "null" }
             ?: obj.optString("username").takeIf { it.isNotBlank() && it != "null" }
-            ?: "User $userId"
+            ?: ""
 
-        val username = authorObj?.optString("username")?.takeIf { it.isNotBlank() }
+        val username = authorObj?.optString("username")?.takeIf { it.isNotBlank() && it != "null" }
             ?: obj.optString("username").takeIf { it.isNotBlank() && it != "null" }
-            ?: "@${authorName.lowercase().replace(" ", "")}"
+            ?: if (authorName.isNotBlank() && !authorName.startsWith("User")) "@${authorName.lowercase().replace(" ", "")}" else ""
 
-        val avatar = authorObj?.optString("profile_image_url")?.takeIf { it.isNotBlank() && it != "null" }
-            ?: authorObj?.optString("avatar_url")?.takeIf { it.isNotBlank() && it != "null" }
-            ?: obj.optString("profile_image_url").takeIf { it.isNotBlank() && it != "null" }
-            ?: obj.optString("avatar_url").takeIf { it.isNotBlank() && it != "null" }
-            ?: "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=800"
+        val avatar = authorObj?.optString("profile_image_url")?.takeIf { it.isNotBlank() && it != "null" && !it.contains("photo-1535713875002") }
+            ?: authorObj?.optString("avatar_url")?.takeIf { it.isNotBlank() && it != "null" && !it.contains("photo-1535713875002") }
+            ?: obj.optString("profile_image_url").takeIf { it.isNotBlank() && it != "null" && !it.contains("photo-1535713875002") }
+            ?: obj.optString("avatar_url").takeIf { it.isNotBlank() && it != "null" && !it.contains("photo-1535713875002") }
+            ?: ""
 
         val isVerified = authorObj?.optBoolean("is_verified", false)
             ?: obj.optBoolean("is_verified", obj.optBoolean("verified", false))
@@ -339,7 +342,7 @@ object PostsApiService {
 
         val author = User(
             id = userId,
-            name = authorName,
+            name = authorName.ifBlank { if (username.isNotBlank()) username.removePrefix("@") else "" },
             username = username,
             profileImageUrl = avatar,
             isVerified = isVerified,
@@ -764,24 +767,38 @@ object PostsApiService {
         if (obj.optInt("is_deleted", 0) == 1) return null
 
         val id = obj.optLong("id", System.currentTimeMillis())
-        val userId = obj.optLong("user_id", 0L)
+        val userId = obj.optLong("user_id", obj.optLong("owner_id", 0L))
+        val authorObj = obj.optJSONObject("author") ?: obj.optJSONObject("user")
 
-        val authorName = obj.optString("author_name").takeIf { it.isNotBlank() && it != "null" }
+        val authorName = authorObj?.optString("name")?.takeIf { it.isNotBlank() && it != "null" }
+            ?: authorObj?.optString("display_name")?.takeIf { it.isNotBlank() && it != "null" }
+            ?: authorObj?.optString("username")?.takeIf { it.isNotBlank() && it != "null" }
+            ?: obj.optString("author_name").takeIf { it.isNotBlank() && it != "null" }
             ?: obj.optString("name").takeIf { it.isNotBlank() && it != "null" }
-            ?: "User $userId"
-        val username = obj.optString("username").takeIf { it.isNotBlank() && it != "null" }
-            ?: "@user$userId"
-        val avatar = obj.optString("author_avatar").takeIf { it.isNotBlank() && it != "null" }
-            ?: obj.optString("profile_image_url").takeIf { it.isNotBlank() && it != "null" }
-            ?: "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=800"
+            ?: obj.optString("display_name").takeIf { it.isNotBlank() && it != "null" }
+            ?: obj.optString("username").takeIf { it.isNotBlank() && it != "null" }
+            ?: ""
+        val username = authorObj?.optString("username")?.takeIf { it.isNotBlank() && it != "null" }
+            ?: obj.optString("username").takeIf { it.isNotBlank() && it != "null" }
+            ?: if (authorName.isNotBlank() && !authorName.startsWith("User")) "@${authorName.lowercase().replace(" ", "")}" else ""
+        val avatar = authorObj?.optString("profile_image_url")?.takeIf { it.isNotBlank() && it != "null" && !it.contains("photo-1535713875002") }
+            ?: authorObj?.optString("avatar_url")?.takeIf { it.isNotBlank() && it != "null" && !it.contains("photo-1535713875002") }
+            ?: obj.optString("author_avatar").takeIf { it.isNotBlank() && it != "null" && !it.contains("photo-1535713875002") }
+            ?: obj.optString("profile_image_url").takeIf { it.isNotBlank() && it != "null" && !it.contains("photo-1535713875002") }
+            ?: obj.optString("avatar_url").takeIf { it.isNotBlank() && it != "null" && !it.contains("photo-1535713875002") }
+            ?: ""
+
+        val isVerified = authorObj?.optBoolean("is_verified", false)
+            ?: obj.optBoolean("is_verified", false)
+        val role = authorObj?.optString("role") ?: obj.optString("role", "user")
 
         val author = User(
             id = userId,
-            name = authorName,
+            name = authorName.ifBlank { if (username.isNotBlank()) username.removePrefix("@") else "" },
             username = username,
             profileImageUrl = avatar,
-            isVerified = userId == 1L,
-            role = if (userId == 1L) "admin" else "user"
+            isVerified = isVerified,
+            role = role
         )
 
         val content = obj.optString("content").takeIf { it != "null" } ?: ""

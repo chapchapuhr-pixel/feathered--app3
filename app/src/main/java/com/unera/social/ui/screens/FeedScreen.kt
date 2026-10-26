@@ -149,7 +149,25 @@ fun FeedScreen(
             }
 
             // 3. Posts with Interleaved Widgets
-            itemsIndexed(posts, key = { _, post -> "post_${post.id}" }) { index, post ->
+            itemsIndexed(posts, key = { _, post -> "post_${post.id}" }) { index, rawPost ->
+                val post = remember(rawPost, allUsers) {
+                    val uId = if (rawPost.userId > 0L) rawPost.userId else rawPost.author.id
+                    val matchedUser = allUsers.find { it.id == uId }
+                    if (matchedUser != null) {
+                        val realName = matchedUser.name.ifBlank { matchedUser.username.removePrefix("@") }
+                        val author = rawPost.author.copy(
+                            id = matchedUser.id,
+                            name = if (realName.isNotBlank() && !realName.startsWith("User")) realName else rawPost.author.name,
+                            username = if (matchedUser.username.isNotBlank()) matchedUser.username else rawPost.author.username,
+                            profileImageUrl = matchedUser.profileImageUrl.ifBlank { rawPost.author.profileImageUrl },
+                            isVerified = matchedUser.isVerified || rawPost.author.isVerified,
+                            role = matchedUser.role.ifBlank { rawPost.author.role }
+                        )
+                        rawPost.copy(author = author, userId = matchedUser.id)
+                    } else {
+                        rawPost
+                    }
+                }
                 val isGroupPost = post.groupId != null || post.postType == "group_post"
                 val isMarketplace = post.product != null || post.postType == "product" || post.postType == "marketplace"
                 val isSharedPost = post.sharedPost != null || post.postType == "shared_post" ||
@@ -898,28 +916,27 @@ fun WebPostCard(
                             }
                         }
 
-                        AsyncImage(
-                            model = post.author.profileImageUrl,
-                            contentDescription = post.author.name,
-                            contentScale = ContentScale.Crop,
+                        FeatheredAvatar(
+                            name = post.author.name,
+                            username = post.author.username,
+                            imageUrl = post.author.profileImageUrl,
+                            size = 22.dp,
+                            borderWidth = 2.dp,
+                            fontSize = 9.sp,
                             modifier = Modifier
-                                .size(22.dp)
                                 .align(Alignment.BottomEnd)
-                                .clip(CircleShape)
-                                .border(2.dp, Color(0xFF0F172A), CircleShape)
                                 .clickable { onUserClick() }
                         )
                     }
                 } else {
-                    AsyncImage(
-                        model = post.author.profileImageUrl,
-                        contentDescription = post.author.name,
-                        contentScale = ContentScale.Crop,
-                        modifier = Modifier
-                            .size(42.dp)
-                            .clip(CircleShape)
-                            .border(1.dp, Color(0xFF1E293B), CircleShape)
-                            .clickable(onClick = onUserClick)
+                    FeatheredAvatar(
+                        name = post.author.name,
+                        username = post.author.username,
+                        imageUrl = post.author.profileImageUrl,
+                        size = 42.dp,
+                        borderWidth = 1.dp,
+                        fontSize = 16.sp,
+                        onClick = onUserClick
                     )
                 }
 
@@ -939,8 +956,11 @@ fun WebPostCard(
                                 modifier = Modifier.clickable { post.groupId?.let { onOpenGroup(it) } }
                             )
                         } else {
+                            val authorDisplayName = post.author.name.takeIf { it.isNotBlank() && !it.startsWith("User") }
+                                ?: post.author.username.takeIf { it.isNotBlank() && !it.startsWith("@user") }?.removePrefix("@")
+                                ?: post.author.name.ifBlank { "Feathered User" }
                             Text(
-                                text = post.author.name,
+                                text = authorDisplayName,
                                 fontWeight = FontWeight.Bold,
                                 fontSize = 21.sp,
                                 color = Color(0xFFF8FAFC),
@@ -2678,30 +2698,33 @@ fun SharedPostNestedCard(
                                     )
                                 }
                             }
-                            AsyncImage(
-                                model = sharedPost.author.profileImageUrl,
-                                contentDescription = sharedPost.author.name,
-                                contentScale = ContentScale.Crop,
+                            FeatheredAvatar(
+                                name = sharedPost.author.name,
+                                username = sharedPost.author.username,
+                                imageUrl = sharedPost.author.profileImageUrl,
+                                size = 20.dp,
+                                borderWidth = 1.dp,
+                                fontSize = 8.sp,
                                 modifier = Modifier
-                                    .size(20.dp)
                                     .align(Alignment.BottomEnd)
-                                    .clip(CircleShape)
-                                    .border(2.dp, Color(0xFF0F172A), CircleShape)
                             )
                         }
                     } else {
-                        AsyncImage(
-                            model = sharedPost.author.profileImageUrl,
-                            contentDescription = sharedPost.author.name,
-                            contentScale = ContentScale.Crop,
-                            modifier = Modifier
-                                .size(36.dp)
-                                .clip(CircleShape)
+                        FeatheredAvatar(
+                            name = sharedPost.author.name,
+                            username = sharedPost.author.username,
+                            imageUrl = sharedPost.author.profileImageUrl,
+                            size = 36.dp,
+                            borderWidth = 1.dp,
+                            fontSize = 14.sp
                         )
                     }
                     Spacer(modifier = Modifier.width(10.dp))
                     Column(modifier = Modifier.weight(1f)) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
+                            val authorDisplayName = sharedPost.author.name.takeIf { it.isNotBlank() && !it.startsWith("User") }
+                                ?: sharedPost.author.username.takeIf { it.isNotBlank() && !it.startsWith("@user") }?.removePrefix("@")
+                                ?: sharedPost.author.name.ifBlank { "Feathered User" }
                             if (isGroup) {
                                 Text(
                                     text = sharedPost.groupName ?: "Group",
@@ -2712,7 +2735,7 @@ fun SharedPostNestedCard(
                                 )
                             } else {
                                 Text(
-                                    text = sharedPost.author.name,
+                                    text = authorDisplayName,
                                     fontWeight = FontWeight.Bold,
                                     fontSize = 14.sp,
                                     color = Color(0xFFF8FAFC)

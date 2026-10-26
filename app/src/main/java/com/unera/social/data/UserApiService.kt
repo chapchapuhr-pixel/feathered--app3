@@ -243,9 +243,11 @@ object UserApiService {
                 setRequestProperty("User-Agent", USER_AGENT)
             }
 
+            val cleanEmail = email.trim().lowercase()
+            val cleanPass = pass.trim()
             val payload = JSONObject().apply {
-                put("email", email.trim())
-                put("password", pass)
+                put("email", cleanEmail)
+                put("password", cleanPass)
             }
             OutputStreamWriter(conn.outputStream, "UTF-8").use {
                 it.write(payload.toString())
@@ -340,10 +342,12 @@ object UserApiService {
                 setRequestProperty("User-Agent", USER_AGENT)
             }
 
+            val cleanEmail = email.trim().lowercase()
+            val cleanPass = pass.trim()
             val payload = JSONObject().apply {
                 put("username", username.trim())
-                put("email", email.trim())
-                put("password", pass)
+                put("email", cleanEmail)
+                put("password", cleanPass)
                 if (nationality.isNotBlank()) put("nationality", nationality.trim())
                 if (location.isNotBlank()) put("location", location.trim())
                 if (birthDate.isNotBlank()) put("birth_date", birthDate.trim())
@@ -475,9 +479,9 @@ object UserApiService {
         val username = if (rawUsername.isNotBlank() && rawUsername != "null") rawUsername else "user$id"
         val displayName = if (rawName.isNotBlank() && rawName != "null") rawName else username
 
-        val avatar = obj.optString("profile_image_url").trim().takeIf { it.isNotBlank() && it != "null" }
-            ?: obj.optString("avatar").trim().takeIf { it.isNotBlank() && it != "null" }
-            ?: "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=400"
+        val avatar = obj.optString("profile_image_url").trim().takeIf { it.isNotBlank() && it != "null" && !it.contains("photo-1535713875002") }
+            ?: obj.optString("avatar").trim().takeIf { it.isNotBlank() && it != "null" && !it.contains("photo-1535713875002") }
+            ?: ""
 
         val isVerified = obj.optBoolean("is_verified", false) || obj.optInt("is_verified", 0) == 1
         val role = obj.optString("role", "user")
@@ -503,9 +507,9 @@ object UserApiService {
         val username = if (rawUsername.isNotBlank() && rawUsername != "null") rawUsername else "user$id"
         val displayName = if (rawName.isNotBlank() && rawName != "null") rawName else username
 
-        val avatar = obj.optString("profile_image_url").trim().takeIf { it.isNotBlank() && it != "null" }
-            ?: obj.optString("avatar").trim().takeIf { it.isNotBlank() && it != "null" }
-            ?: "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=400"
+        val avatar = obj.optString("profile_image_url").trim().takeIf { it.isNotBlank() && it != "null" && !it.contains("photo-1535713875002") }
+            ?: obj.optString("avatar").trim().takeIf { it.isNotBlank() && it != "null" && !it.contains("photo-1535713875002") }
+            ?: ""
 
         val cover = obj.optString("cover_image_url").trim().takeIf { it.isNotBlank() && it != "null" }
             ?: "https://images.unsplash.com/photo-1579546929518-9e396f3cc809?w=1200"

@@ -264,14 +264,38 @@ class FeatheredViewModel(application: Application) : AndroidViewModel(applicatio
         refreshFeedAds()
     }
 
+    private fun enrichPostsWithAuthors(posts: List<Post>, users: List<User>): List<Post> {
+        if (users.isEmpty() || posts.isEmpty()) return posts
+        val userMap = users.associateBy { it.id }
+        return posts.map { post ->
+            val uId = if (post.userId > 0L) post.userId else post.author.id
+            val matchedUser = userMap[uId]
+            if (matchedUser != null) {
+                val realName = matchedUser.name.ifBlank { matchedUser.username.removePrefix("@") }
+                val author = post.author.copy(
+                    id = matchedUser.id,
+                    name = if (realName.isNotBlank() && !realName.startsWith("User")) realName else post.author.name,
+                    username = if (matchedUser.username.isNotBlank()) matchedUser.username else post.author.username,
+                    profileImageUrl = matchedUser.profileImageUrl.ifBlank { post.author.profileImageUrl },
+                    isVerified = matchedUser.isVerified || post.author.isVerified,
+                    role = matchedUser.role.ifBlank { post.author.role }
+                )
+                post.copy(author = author, userId = matchedUser.id)
+            } else {
+                post
+            }
+        }
+    }
+
     fun refreshVideos() {
         viewModelScope.launch {
             _uiState.update { it.copy(isVideosLoading = true) }
             val uid = if (_uiState.value.isLoggedIn && !_uiState.value.isGuest) _uiState.value.currentUser.id else null
             val liveVideos = VideosApiService.fetchVideos(userId = uid, limit = 50)
+            val enriched = enrichPostsWithAuthors(liveVideos, _uiState.value.users)
             _uiState.update { state ->
                 state.copy(
-                    videoPosts = liveVideos,
+                    videoPosts = enriched,
                     isVideosLoading = false
                 )
             }
@@ -304,11 +328,37 @@ class FeatheredViewModel(application: Application) : AndroidViewModel(applicatio
                 // Non-logged in feed fetches from api/posts
                 PostsApiService.fetchPublicPosts()
             }
+            val currentUsers = _uiState.value.users
+            val enrichedPosts = enrichPostsWithAuthors(livePosts, currentUsers)
             _uiState.update { state ->
                 state.copy(
-                    posts = livePosts,
+                    posts = enrichedPosts,
                     isFeedLoading = false
                 )
+            }
+
+            // Check for missing authors whose ID is > 0 but not yet in cached users
+            val missingUserIds = enrichedPosts
+                .map { if (it.userId > 0L) it.userId else it.author.id }
+                .filter { it > 0L && currentUsers.none { u -> u.id == it } }
+                .distinct()
+
+            if (missingUserIds.isNotEmpty()) {
+                val fetchedUsers = mutableListOf<User>()
+                for (uid in missingUserIds.take(15)) {
+                    val u = UserApiService.fetchUserById(uid)
+                    if (u != null) {
+                        fetchedUsers.add(u)
+                    }
+                }
+                if (fetchedUsers.isNotEmpty()) {
+                    _uiState.update { state ->
+                        val combined = (state.users + fetchedUsers).distinctBy { it.id }
+                        val reEnriched = enrichPostsWithAuthors(state.posts, combined)
+                        val reEnrichedVideos = enrichPostsWithAuthors(state.videoPosts, combined)
+                        state.copy(users = combined, posts = reEnriched, videoPosts = reEnrichedVideos)
+                    }
+                }
             }
         }
     }
@@ -317,8 +367,10 @@ class FeatheredViewModel(application: Application) : AndroidViewModel(applicatio
         viewModelScope.launch {
             _uiState.update { it.copy(isProfilePostsLoading = true) }
             val userPosts = PostsApiService.fetchUserPosts(userId)
+            val currentUsers = _uiState.value.users
+            val enriched = enrichPostsWithAuthors(userPosts, currentUsers)
             _uiState.update { state ->
-                val updatedMap = state.userProfilePosts + (userId to userPosts)
+                val updatedMap = state.userProfilePosts + (userId to enriched)
                 state.copy(
                     userProfilePosts = updatedMap,
                     isProfilePostsLoading = false
@@ -379,7 +431,13 @@ class FeatheredViewModel(application: Application) : AndroidViewModel(applicatio
                     } else {
                         liveUsers.distinctBy { it.id }
                     }
-                    state.copy(users = allCombined)
+                    val enrichedPosts = enrichPostsWithAuthors(state.posts, allCombined)
+                    val enrichedVideos = enrichPostsWithAuthors(state.videoPosts, allCombined)
+                    state.copy(
+                        users = allCombined,
+                        posts = enrichedPosts,
+                        videoPosts = enrichedVideos
+                    )
                 }
             }
         }

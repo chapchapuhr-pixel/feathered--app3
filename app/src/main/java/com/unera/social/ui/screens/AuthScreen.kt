@@ -246,7 +246,7 @@ fun LoginView(
                     // Email Input
                     OutlinedTextField(
                         value = email,
-                        onValueChange = { email = it },
+                        onValueChange = { email = it.replace(" ", "").lowercase() },
                         placeholder = { Text("Email address", color = AuthTextSecondary, fontSize = 16.sp) },
                         singleLine = true,
                         shape = RoundedCornerShape(8.dp),
@@ -297,16 +297,18 @@ fun LoginView(
                     Button(
                         onClick = {
                             error = ""
-                            if (email.isBlank() || password.isBlank()) {
+                            val cleanEmail = email.trim().lowercase()
+                            val cleanPassword = password.trim()
+                            if (cleanEmail.isBlank() || cleanPassword.isBlank()) {
                                 error = "Please enter both email and password."
                                 return@Button
                             }
                             loading = true
                             coroutineScope.launch {
-                                val (ok, errorMsg) = onLoginSubmit(email, password)
+                                val (ok, errorMsg) = onLoginSubmit(cleanEmail, cleanPassword)
                                 loading = false
                                 if (!ok) {
-                                    error = errorMsg ?: "Login failed. Please check your credentials."
+                                    error = errorMsg ?: "Invalid email or password."
                                 }
                             }
                         },
@@ -574,7 +576,7 @@ fun RegisterView(
                 // Email Input
                 OutlinedTextField(
                     value = email,
-                    onValueChange = { email = it },
+                    onValueChange = { email = it.replace(" ", "").lowercase() },
                     placeholder = { Text("Email address", color = AuthTextSecondary, fontSize = 15.sp) },
                     singleLine = true,
                     shape = RoundedCornerShape(8.dp),
@@ -775,15 +777,17 @@ fun RegisterView(
                     onClick = {
                         error = ""
                         val fullName = if (surname.isNotBlank()) "${firstName.trim()} ${surname.trim()}" else firstName.trim()
+                        val cleanEmail = email.trim().lowercase()
+                        val cleanPassword = password.trim()
                         if (fullName.isBlank()) {
                             error = "Please enter your name."
                             return@Button
                         }
-                        if (email.isBlank()) {
+                        if (cleanEmail.isBlank()) {
                             error = "Please enter your email."
                             return@Button
                         }
-                        if (password.length < 6) {
+                        if (cleanPassword.length < 6) {
                             error = "Password must be at least 6 characters."
                             return@Button
                         }
@@ -791,8 +795,8 @@ fun RegisterView(
                         coroutineScope.launch {
                             val (ok, errorMsg) = onRegisterSubmit(
                                 fullName,
-                                email,
-                                password,
+                                cleanEmail,
+                                cleanPassword,
                                 selectedCountry.name,
                                 region,
                                 birthDate,
@@ -953,7 +957,7 @@ fun ForgotPasswordView(
 
                 OutlinedTextField(
                     value = email,
-                    onValueChange = { email = it },
+                    onValueChange = { email = it.replace(" ", "").lowercase() },
                     placeholder = { Text("Email address", color = AuthTextSecondary, fontSize = 16.sp) },
                     singleLine = true,
                     shape = RoundedCornerShape(8.dp),

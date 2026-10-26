@@ -28,6 +28,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
@@ -453,3 +454,107 @@ fun ImageViewer(
         }
     }
 }
+
+private val AVATAR_GRADIENTS = listOf(
+    listOf(Color(0xFF2563EB), Color(0xFF1D4ED8)), // Royal Blue
+    listOf(Color(0xFF7C3AED), Color(0xFF6D28D9)), // Violet
+    listOf(Color(0xFF059669), Color(0xFF047857)), // Emerald
+    listOf(Color(0xFFEA580C), Color(0xFFC2410C)), // Orange
+    listOf(Color(0xFFDB2777), Color(0xFFBE185D)), // Pink
+    listOf(Color(0xFF0284C7), Color(0xFF0369A1))  // Sky Blue
+)
+
+/**
+ * Calculates user initials (e.g., "Jastin Beda" -> "JB", "John" -> "JO", etc.)
+ */
+fun getUserInitials(name: String, username: String = ""): String {
+    val clean = name.trim().ifBlank { username.trim().removePrefix("@") }
+    if (clean.isBlank()) return "U"
+    val parts = clean.split("\\s+".toRegex()).filter { it.isNotBlank() }
+    return when {
+        parts.size >= 2 -> "${parts[0].first().uppercaseChar()}${parts[1].first().uppercaseChar()}"
+        parts.isNotEmpty() && parts[0].length >= 2 -> parts[0].take(2).uppercase()
+        parts.isNotEmpty() -> parts[0].take(1).uppercase()
+        else -> "U"
+    }
+}
+
+/**
+ * FeatheredAvatar
+ *
+ * Displays user's profile image if present. If absent, empty, or fails to load,
+ * gracefully renders the user's initials (e.g. "JB" for "Jastin Beda") centered
+ * on a colorful modern gradient circle.
+ */
+@Composable
+fun FeatheredAvatar(
+    name: String,
+    imageUrl: String?,
+    size: Dp,
+    modifier: Modifier = Modifier,
+    username: String = "",
+    fontSize: TextUnit = (size.value * 0.38f).sp,
+    borderColor: Color = Color.Transparent,
+    borderWidth: Dp = 0.dp,
+    shape: androidx.compose.ui.graphics.Shape = CircleShape,
+    onClick: (() -> Unit)? = null
+) {
+    val hasValidImage = !imageUrl.isNullOrBlank() &&
+        !imageUrl.contains("photo-1535713875002") &&
+        imageUrl != "null"
+    val initials = remember(name, username) { getUserInitials(name, username) }
+    val gradientColors = remember(name, username) {
+        val cleanKey = name.ifBlank { username }
+        val hash = kotlin.math.abs(cleanKey.hashCode())
+        AVATAR_GRADIENTS[hash % AVATAR_GRADIENTS.size]
+    }
+
+    val clickableMod = if (onClick != null) modifier.clickable(onClick = onClick) else modifier
+
+    Box(
+        modifier = clickableMod
+            .size(size)
+            .clip(shape)
+            .then(if (borderWidth > 0.dp) Modifier.border(borderWidth, borderColor, shape) else Modifier),
+        contentAlignment = Alignment.Center
+    ) {
+        if (hasValidImage) {
+            SubcomposeAsyncImage(
+                model = imageUrl,
+                contentDescription = name,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize(),
+                error = {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .background(Brush.linearGradient(gradientColors)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = initials,
+                            color = Color.White,
+                            fontSize = fontSize,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+            )
+        } else {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Brush.linearGradient(gradientColors)),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = initials,
+                    color = Color.White,
+                    fontSize = fontSize,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+        }
+    }
+}
+

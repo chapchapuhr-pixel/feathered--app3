@@ -29,6 +29,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalClipboardManager
 import com.unera.social.ui.components.VerifiedBadge
+import com.unera.social.ui.components.FeatheredAvatar
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
@@ -436,15 +437,19 @@ fun ProfileScreen(
                             .align(Alignment.BottomStart)
                             .padding(start = 16.dp)
                     ) {
-                        AsyncImage(
-                            model = user.profileImageUrl,
-                            contentDescription = user.name,
-                            contentScale = ContentScale.Crop,
-                            modifier = Modifier
-                                .size(96.dp)
-                                .clip(CircleShape)
-                                .border(4.dp, Color(0xFF0F172A), CircleShape)
-                                .clickable { lightboxImage = user.profileImageUrl }
+                        FeatheredAvatar(
+                            name = user.name,
+                            username = user.username,
+                            imageUrl = user.profileImageUrl,
+                            size = 96.dp,
+                            borderWidth = 4.dp,
+                            borderColor = Color(0xFF0F172A),
+                            fontSize = 32.sp,
+                            onClick = {
+                                if (user.profileImageUrl.isNotBlank()) {
+                                    lightboxImage = user.profileImageUrl
+                                }
+                            }
                         )
 
                         if (isMe) {
@@ -542,7 +547,7 @@ fun ProfileScreen(
                         }
                     }
 
-                    // Followers / Following / Posts count row
+                    // Followers / Posts count row (following removed as Feathered does not display following)
                     Row(
                         modifier = Modifier.padding(top = 4.dp),
                         verticalAlignment = Alignment.CenterVertically
@@ -555,22 +560,6 @@ fun ProfileScreen(
                         )
                         Text(
                             text = " followers",
-                            color = Color(0xFF94A3B8),
-                            fontSize = 15.sp
-                        )
-                        Text(
-                            text = "  ·  ",
-                            color = Color(0xFF64748B),
-                            fontSize = 15.sp
-                        )
-                        Text(
-                            text = "${user.followingCount}",
-                            fontWeight = FontWeight.Bold,
-                            color = Color(0xFFF8FAFC),
-                            fontSize = 15.sp
-                        )
-                        Text(
-                            text = " following",
                             color = Color(0xFF94A3B8),
                             fontSize = 15.sp
                         )
