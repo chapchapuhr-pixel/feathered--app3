@@ -41,6 +41,7 @@ import com.unera.social.model.User
 @Composable
 fun FeatheredTopBar(
     currentUser: User,
+    isGuest: Boolean = false,
     unreadNotificationsCount: Int = 0,
     marketplaceBadgeCount: Int = 0,
     isMarketplaceActive: Boolean = false,
@@ -49,6 +50,7 @@ fun FeatheredTopBar(
     onSearchClick: () -> Unit,
     onNotificationsClick: () -> Unit,
     onProfileClick: () -> Unit,
+    onLoginClick: () -> Unit = {},
     onMenuClick: () -> Unit = {}
 ) {
     Surface(
@@ -223,13 +225,36 @@ fun FeatheredTopBar(
                         }
                     }
 
-                    // 4. User Profile Avatar: w-10 h-10 rounded-full border-2 border-[#334155]/80 bg-[#1E293B]
-                    Box(
-                        modifier = Modifier
-                            .size(40.dp)
-                            .clip(CircleShape)
-                            .background(Color(0xFF1E293B))
-                            .border(2.dp, Color(0xFF334155).copy(alpha = 0.8f), CircleShape)
+                    // 4. If guest: Small "Log In" button on top right
+                    //    If logged in: User Profile Avatar button
+                    if (isGuest || currentUser.id <= 0L) {
+                        Button(
+                            onClick = onLoginClick,
+                            shape = RoundedCornerShape(20.dp),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = Color(0xFF1877F2),
+                                contentColor = Color.White
+                            ),
+                            contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp),
+                            modifier = Modifier
+                                .height(36.dp)
+                                .testTag("top_bar_login_btn")
+                        ) {
+                            Text(
+                                text = "Log In",
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Color.White
+                            )
+                        }
+                    } else {
+                        // User Profile Avatar: w-10 h-10 rounded-full border-2 border-[#334155]/80 bg-[#1E293B]
+                        Box(
+                            modifier = Modifier
+                                .size(40.dp)
+                                .clip(CircleShape)
+                                .background(Color(0xFF1E293B))
+                                .border(2.dp, Color(0xFF334155).copy(alpha = 0.8f), CircleShape)
                             .clickable { onProfileClick() }
                             .testTag("top_bar_profile_btn"),
                         contentAlignment = Alignment.Center
@@ -241,6 +266,7 @@ fun FeatheredTopBar(
                             modifier = Modifier.fillMaxSize()
                         )
                     }
+                }
                 }
             }
 

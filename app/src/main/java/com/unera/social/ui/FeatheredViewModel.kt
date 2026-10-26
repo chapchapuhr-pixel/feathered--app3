@@ -201,6 +201,7 @@ class FeatheredViewModel(application: Application) : AndroidViewModel(applicatio
         // Session restore on app load matching App.tsx auto-on-app-load
         val context = getApplication<Application>().applicationContext
         val savedUser = UserSessionManager.getSavedUser(context)
+        val savedToken = UserSessionManager.getAuthToken(context)
         if (savedUser != null && savedUser.id > 0L) {
             _uiState.update {
                 it.copy(
@@ -210,10 +211,15 @@ class FeatheredViewModel(application: Application) : AndroidViewModel(applicatio
                     showAuthModal = false
                 )
             }
-            // Refresh fresh profile from /api/users?id=<id> in background
+            // Refresh fresh profile from /api/auth/user/me or /api/users?id=<id> in background
             viewModelScope.launch {
                 try {
-                    val fresh = UserApiService.fetchUserById(savedUser.id)
+                    var fresh = if (!savedToken.isNullOrBlank()) {
+                        UserApiService.fetchCurrentUser(savedToken)
+                    } else null
+                    if (fresh == null) {
+                        fresh = UserApiService.fetchUserById(savedUser.id, savedToken)
+                    }
                     if (fresh != null) {
                         val updated = savedUser.copy(
                             name = fresh.name.ifBlank { savedUser.name },
@@ -229,7 +235,7 @@ class FeatheredViewModel(application: Application) : AndroidViewModel(applicatio
                             followingCount = if (fresh.followingCount > 0) fresh.followingCount else savedUser.followingCount
                         )
                         _uiState.update { it.copy(currentUser = updated) }
-                        UserSessionManager.saveUser(context, updated)
+                        UserSessionManager.saveAuth(context, savedToken, updated)
                     }
                 } catch (e: Exception) {
                     e.printStackTrace()
@@ -3395,9 +3401,10 @@ class FeatheredViewModel(application: Application) : AndroidViewModel(applicatio
 
         val result = UserApiService.loginUser(trimmedEmail, pass)
         return if (result.isSuccess) {
-            val liveUser = result.getOrThrow()
+            val authResult = result.getOrThrow()
+            val liveUser = authResult.user
             val context = getApplication<Application>().applicationContext
-            UserSessionManager.saveUser(context, liveUser)
+            UserSessionManager.saveAuth(context, authResult.token, liveUser)
 
             _uiState.update { state ->
                 val updatedUsers = if (state.users.any { it.id == liveUser.id }) {
@@ -3420,7 +3427,7 @@ class FeatheredViewModel(application: Application) : AndroidViewModel(applicatio
             fetchPeopleYouMayKnow()
             Pair(true, null)
         } else {
-            val errorMsg = result.exceptionOrNull()?.message ?: "Login failed. Please check your credentials."
+            val errorMsg = result.exceptionOrNull()?.message ?: "Invalid email or password."
             Pair(false, errorMsg)
         }
     }
@@ -3439,21 +3446,21 @@ class FeatheredViewModel(application: Application) : AndroidViewModel(applicatio
             return Pair(false, "Please complete all fields with a valid password (min 6 characters).")
         }
 
-        val result = UserApiService.registerUser(
-            name = username.trim(),
+        val result = UserApiService.signupUser(
             username = username.trim(),
             email = trimmedEmail,
             pass = pass,
             nationality = nationality.ifBlank { "Tanzania" },
-            location = location.ifBlank { "Dar es Salaam, Tanzania" },
+            location = location.ifBlank { "Dar es Salaam" },
             birthDate = birthDate,
-            gender = gender.ifBlank { "Male" }
+            gender = gender.ifBlank { "Female" }
         )
 
         return if (result.isSuccess) {
-            val liveUser = result.getOrThrow()
+            val authResult = result.getOrThrow()
+            val liveUser = authResult.user
             val context = getApplication<Application>().applicationContext
-            UserSessionManager.saveUser(context, liveUser)
+            UserSessionManager.saveAuth(context, authResult.token, liveUser)
 
             _uiState.update { state ->
                 val updatedUsers = if (state.users.any { it.id == liveUser.id }) {
@@ -3475,7 +3482,7 @@ class FeatheredViewModel(application: Application) : AndroidViewModel(applicatio
             fetchPeopleYouMayKnow()
             Pair(true, null)
         } else {
-            val errorMsg = result.exceptionOrNull()?.message ?: "Registration failed. Please try again."
+            val errorMsg = result.exceptionOrNull()?.message ?: "Signup failed. Please try again."
             Pair(false, errorMsg)
         }
     }

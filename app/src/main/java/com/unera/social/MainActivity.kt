@@ -106,14 +106,28 @@ fun FeatheredApp(
             if (!uiState.showNotificationsOverlay && uiState.activeConversationId == null && !hasCustomTopBar) {
                 FeatheredTopBar(
                     currentUser = uiState.currentUser,
+                    isGuest = uiState.isGuest || !uiState.isLoggedIn,
                     unreadNotificationsCount = unreadNotificationsCount,
                     marketplaceBadgeCount = uiState.products.size.coerceAtMost(99),
                     isMarketplaceActive = uiState.currentScreen == Screen.MARKETPLACE,
                     onHomeClick = { viewModel.setScreen(Screen.FEED) },
                     onMarketplaceClick = { viewModel.setScreen(Screen.MARKETPLACE) },
                     onSearchClick = { viewModel.setShowSearchDialog(true) },
-                    onNotificationsClick = { viewModel.setShowNotificationsOverlay(true) },
-                    onProfileClick = { viewModel.setScreen(Screen.PROFILE) },
+                    onNotificationsClick = {
+                        if (uiState.isGuest || !uiState.isLoggedIn) {
+                            viewModel.openAuth("login")
+                        } else {
+                            viewModel.setShowNotificationsOverlay(true)
+                        }
+                    },
+                    onProfileClick = {
+                        if (uiState.isGuest || !uiState.isLoggedIn) {
+                            viewModel.openAuth("login")
+                        } else {
+                            viewModel.setScreen(Screen.PROFILE)
+                        }
+                    },
+                    onLoginClick = { viewModel.openAuth("login") },
                     onMenuClick = { viewModel.setShowMenuOverlay(true) }
                 )
             }

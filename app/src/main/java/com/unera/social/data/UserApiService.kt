@@ -11,11 +11,17 @@ import java.io.OutputStreamWriter
 import java.net.HttpURLConnection
 import java.net.URL
 
+data class AuthResult(
+    val user: User,
+    val token: String
+)
+
 /**
  * UserApiService
  *
- * Dedicated live network service for user profile data, People You May Know (suggestions),
- * and follow/unfollow interactions matching Feathered web App.tsx.
+ * Dedicated live network service for authentication, user profile data,
+ * People You May Know (suggestions), and follow/unfollow interactions matching
+ * Feathered web Auth.tsx and App.tsx.
  */
 object UserApiService {
 
@@ -219,20 +225,19 @@ object UserApiService {
     /**
      * POST /api/users/login
      * Body: { email, password }
-     * Matches web App.tsx handleLogin verbatim:
+     * Matches web Auth.tsx apiLogin verbatim:
      * 1. POST /api/users/login
-     * 2. normalizeUser(data.user)
-     * 3. GET /api/users?id=<id> for fresh profile
-     * 4. Returns merged final User
+     * 2. Returns { success, token, user }
+     * 3. Hydrates user with fresh profile via GET /api/users?id=<id>
      */
-    suspend fun loginUser(email: String, pass: String): Result<User> = withContext(Dispatchers.IO) {
+    suspend fun loginUser(email: String, pass: String): Result<AuthResult> = withContext(Dispatchers.IO) {
         try {
             val url = URL("$BASE_URL/api/users/login")
             val conn = (url.openConnection() as HttpURLConnection).apply {
                 requestMethod = "POST"
                 doOutput = true
-                connectTimeout = 12000
-                readTimeout = 12000
+                connectTimeout = 15000
+                readTimeout = 15000
                 setRequestProperty("Content-Type", "application/json; charset=utf-8")
                 setRequestProperty("Accept", "application/json")
                 setRequestProperty("User-Agent", USER_AGENT)
@@ -255,28 +260,29 @@ object UserApiService {
             if (responseCode !in 200..299) {
                 val errorMsg = try {
                     val root = JSONObject(responseText)
-                    root.optString("error", root.optString("message", "Login failed (code $responseCode)"))
+                    root.optString("error", root.optString("message", "Invalid email or password."))
                 } catch (e: Exception) {
-                    "Login failed (code $responseCode)"
+                    if (responseCode == 401 || responseCode == 403) "Invalid email or password." else "Login failed (code $responseCode)"
                 }
                 return@withContext Result.failure(Exception(errorMsg))
             }
 
             val root = JSONObject(responseText)
+            val token = root.optString("token", "").trim()
             val userObj = root.optJSONObject("user")
-                ?: return@withContext Result.failure(Exception("Login failed: user missing"))
+                ?: return@withContext Result.failure(Exception("Login failed: user data missing"))
 
             val normalized = parseUserJson(userObj)
-                ?: return@withContext Result.failure(Exception("Login failed: invalid user id"))
+                ?: return@withContext Result.failure(Exception("Login failed: invalid user ID"))
 
             if (normalized.id <= 0L) {
-                return@withContext Result.failure(Exception("Login failed: invalid user id"))
+                return@withContext Result.failure(Exception("Login failed: invalid user ID"))
             }
 
             // Freshness fetch matching App.tsx: apiFetch(`/api/users?id=${normalized.id}`)
             var finalUser = normalized
             try {
-                val fresh = fetchUserById(normalized.id)
+                val fresh = fetchUserById(normalized.id, token)
                 if (fresh != null) {
                     finalUser = normalized.copy(
                         name = fresh.name.ifBlank { normalized.name },
@@ -286,6 +292,9 @@ object UserApiService {
                         coverImageUrl = fresh.coverImageUrl.ifBlank { normalized.coverImageUrl },
                         bio = fresh.bio.ifBlank { normalized.bio },
                         location = fresh.location.ifBlank { normalized.location },
+                        work = fresh.work.ifBlank { normalized.work },
+                        education = fresh.education.ifBlank { normalized.education },
+                        website = fresh.website.ifBlank { normalized.website },
                         isVerified = fresh.isVerified || normalized.isVerified,
                         role = fresh.role.ifBlank { normalized.role },
                         followersCount = if (fresh.followersCount > 0) fresh.followersCount else normalized.followersCount,
@@ -293,10 +302,10 @@ object UserApiService {
                     )
                 }
             } catch (e: Exception) {
-                // Non-fatal, fallback to normalized user
+                // Non-fatal
             }
 
-            Result.success(finalUser)
+            Result.success(AuthResult(user = finalUser, token = token))
         } catch (e: Exception) {
             e.printStackTrace()
             Result.failure(e)
@@ -304,41 +313,41 @@ object UserApiService {
     }
 
     /**
-     * POST /api/users/register
-     * Body: { name, username, email, password, nationality, location, birthDate, gender }
-     * Matches web App.tsx handleRegister verbatim.
+     * POST /api/users/signup
+     * Body: { username, email, password, nationality, location, birth_date, gender }
+     * Matches web Auth.tsx apiSignup verbatim:
+     * 1. POST /api/users/signup
+     * 2. Returns { success, token, user }
      */
-    suspend fun registerUser(
-        name: String,
+    suspend fun signupUser(
         username: String,
         email: String,
         pass: String,
         nationality: String = "Tanzania",
-        location: String = "Dar es Salaam, Tanzania",
+        location: String = "Dar es Salaam",
         birthDate: String = "",
-        gender: String = "Male"
-    ): Result<User> = withContext(Dispatchers.IO) {
+        gender: String = "Female"
+    ): Result<AuthResult> = withContext(Dispatchers.IO) {
         try {
-            val url = URL("$BASE_URL/api/users/register")
+            val url = URL("$BASE_URL/api/users/signup")
             val conn = (url.openConnection() as HttpURLConnection).apply {
                 requestMethod = "POST"
                 doOutput = true
-                connectTimeout = 12000
-                readTimeout = 12000
+                connectTimeout = 15000
+                readTimeout = 15000
                 setRequestProperty("Content-Type", "application/json; charset=utf-8")
                 setRequestProperty("Accept", "application/json")
                 setRequestProperty("User-Agent", USER_AGENT)
             }
 
             val payload = JSONObject().apply {
-                put("name", name.trim())
-                put("username", username.trim().removePrefix("@"))
+                put("username", username.trim())
                 put("email", email.trim())
                 put("password", pass)
-                put("nationality", nationality.trim())
-                put("location", location.trim())
-                put("birthDate", birthDate.trim())
-                put("gender", gender.trim())
+                if (nationality.isNotBlank()) put("nationality", nationality.trim())
+                if (location.isNotBlank()) put("location", location.trim())
+                if (birthDate.isNotBlank()) put("birth_date", birthDate.trim())
+                if (gender.isNotBlank()) put("gender", gender.trim())
             }
             OutputStreamWriter(conn.outputStream, "UTF-8").use {
                 it.write(payload.toString())
@@ -353,25 +362,26 @@ object UserApiService {
             if (responseCode !in 200..299) {
                 val errorMsg = try {
                     val root = JSONObject(responseText)
-                    root.optString("error", root.optString("message", "Registration failed (code $responseCode)"))
+                    root.optString("error", root.optString("message", "Signup failed (code $responseCode)"))
                 } catch (e: Exception) {
-                    "Registration failed (code $responseCode)"
+                    "Signup failed (code $responseCode)"
                 }
                 return@withContext Result.failure(Exception(errorMsg))
             }
 
             val root = JSONObject(responseText)
+            val token = root.optString("token", "").trim()
             val userObj = root.optJSONObject("user")
-                ?: return@withContext Result.failure(Exception("Registration failed: user missing"))
+                ?: return@withContext Result.failure(Exception("Signup failed: user data missing"))
 
             val normalized = parseUserJson(userObj)
-                ?: return@withContext Result.failure(Exception("Registration failed: invalid user id"))
+                ?: return@withContext Result.failure(Exception("Signup failed: invalid user ID"))
 
             if (normalized.id <= 0L) {
-                return@withContext Result.failure(Exception("Registration failed: invalid user id"))
+                return@withContext Result.failure(Exception("Signup failed: invalid user ID"))
             }
 
-            Result.success(normalized)
+            Result.success(AuthResult(user = normalized, token = token))
         } catch (e: Exception) {
             e.printStackTrace()
             Result.failure(e)
@@ -379,10 +389,45 @@ object UserApiService {
     }
 
     /**
-     * GET /api/users?id={userId}
-     * Fetches fresh user profile by ID.
+     * GET /api/auth/user/me
+     * Matches ENDPOINT 4: Used at app launch to refresh stored token.
+     * Headers: Authorization: Bearer <token>
      */
-    suspend fun fetchUserById(userId: Long): User? = withContext(Dispatchers.IO) {
+    suspend fun fetchCurrentUser(token: String): User? = withContext(Dispatchers.IO) {
+        if (token.isBlank()) return@withContext null
+        try {
+            val url = URL("$BASE_URL/api/auth/user/me")
+            val conn = (url.openConnection() as HttpURLConnection).apply {
+                requestMethod = "GET"
+                connectTimeout = 8000
+                readTimeout = 8000
+                setRequestProperty("Accept", "application/json")
+                setRequestProperty("Authorization", "Bearer $token")
+                setRequestProperty("User-Agent", USER_AGENT)
+            }
+
+            if (conn.responseCode in 200..299) {
+                val responseText = BufferedReader(InputStreamReader(conn.inputStream)).use { it.readText() }.trim()
+                conn.disconnect()
+                if (responseText.startsWith("{")) {
+                    val root = JSONObject(responseText)
+                    val userObj = root.optJSONObject("user") ?: root
+                    return@withContext parseUserJson(userObj)
+                }
+            } else {
+                conn.disconnect()
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+        null
+    }
+
+    /**
+     * GET /api/users?id={userId}
+     * Matches ENDPOINT 3: Fetches fresh user profile by ID.
+     */
+    suspend fun fetchUserById(userId: Long, token: String? = null): User? = withContext(Dispatchers.IO) {
         if (userId <= 0L) return@withContext null
         try {
             val url = URL("$BASE_URL/api/users?id=$userId")
@@ -393,6 +438,9 @@ object UserApiService {
                 setRequestProperty("Accept", "application/json")
                 setRequestProperty("User-Agent", USER_AGENT)
                 setRequestProperty("x-user-id", userId.toString())
+                if (!token.isNullOrBlank()) {
+                    setRequestProperty("Authorization", "Bearer $token")
+                }
             }
 
             if (conn.responseCode in 200..299) {
@@ -422,8 +470,9 @@ object UserApiService {
         val id = obj.optLong("id", obj.optLong("user_id", 0L))
         if (id <= 0L) return null
 
-        val username = obj.optString("username").trim().ifBlank { "user$id" }
+        val rawUsername = obj.optString("username").trim()
         val rawName = obj.optString("name").trim()
+        val username = if (rawUsername.isNotBlank() && rawUsername != "null") rawUsername else "user$id"
         val displayName = if (rawName.isNotBlank() && rawName != "null") rawName else username
 
         val avatar = obj.optString("profile_image_url").trim().takeIf { it.isNotBlank() && it != "null" }
@@ -449,8 +498,9 @@ object UserApiService {
         val id = obj.optLong("id", obj.optLong("user_id", 0L))
         if (id <= 0L) return null
 
-        val username = obj.optString("username").trim().ifBlank { "user$id" }
+        val rawUsername = obj.optString("username").trim()
         val rawName = obj.optString("name").trim()
+        val username = if (rawUsername.isNotBlank() && rawUsername != "null") rawUsername else "user$id"
         val displayName = if (rawName.isNotBlank() && rawName != "null") rawName else username
 
         val avatar = obj.optString("profile_image_url").trim().takeIf { it.isNotBlank() && it != "null" }
@@ -463,9 +513,9 @@ object UserApiService {
         val bio = obj.optString("bio").trim().takeIf { it.isNotBlank() && it != "null" } ?: ""
         val location = obj.optString("location").trim().takeIf { it.isNotBlank() && it != "null" } ?: ""
         val email = obj.optString("email").trim().takeIf { it.isNotBlank() && it != "null" } ?: ""
-        val work = obj.optString("work").trim().takeIf { it.isNotBlank() && it != "null" } ?: "Software Engineer at TechCorp"
-        val education = obj.optString("education").trim().takeIf { it.isNotBlank() && it != "null" } ?: "University of Dar es Salaam"
-        val website = obj.optString("website").trim().takeIf { it.isNotBlank() && it != "null" } ?: "https://feathered.social"
+        val work = obj.optString("work").trim().takeIf { it.isNotBlank() && it != "null" } ?: ""
+        val education = obj.optString("education").trim().takeIf { it.isNotBlank() && it != "null" } ?: ""
+        val website = obj.optString("website").trim().takeIf { it.isNotBlank() && it != "null" } ?: ""
 
         val followersCount = when {
             obj.has("followers") && obj.optJSONArray("followers") != null -> obj.optJSONArray("followers")!!.length()
@@ -479,8 +529,9 @@ object UserApiService {
         val isVerified = obj.optBoolean("is_verified", false) || obj.optInt("is_verified", 0) == 1
         val role = obj.optString("role", "user")
         val isFollowing = obj.optBoolean("is_following", false)
-        val birthDate = obj.optString("birthDate").trim().takeIf { it.isNotBlank() && it != "null" }
-        val gender = obj.optString("gender", "Male")
+        val birthDate = (obj.optString("birth_date").takeIf { it.isNotBlank() && it != "null" }
+            ?: obj.optString("birthDate").takeIf { it.isNotBlank() && it != "null" })?.trim()
+        val gender = obj.optString("gender", "Female")
 
         return User(
             id = id,
@@ -511,4 +562,3 @@ data class FollowDataResult(
     val followers: List<Long>,
     val following: List<Long>
 )
-

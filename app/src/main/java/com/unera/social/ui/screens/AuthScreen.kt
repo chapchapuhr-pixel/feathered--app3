@@ -28,6 +28,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.layout.ContentScale
 import coil.compose.AsyncImage
 import com.unera.social.R
 import kotlinx.coroutines.delay
@@ -80,21 +81,14 @@ fun BrandHeader(
         horizontalArrangement = Arrangement.Center,
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Box(
+        AsyncImage(
+            model = APP_LOGO,
+            contentDescription = APP_NAME,
             modifier = Modifier
                 .size(size.dp)
-                .clip(CircleShape)
-                .background(Color(0xFF0B0E14))
-                .border(1.dp, Color(0xFF1E293B), CircleShape),
-            contentAlignment = Alignment.Center
-        ) {
-            Icon(
-                painter = painterResource(id = R.drawable.ic_feather_logo),
-                contentDescription = APP_NAME,
-                tint = Color(0xFF1877F2),
-                modifier = Modifier.size((size * 0.65).dp)
-            )
-        }
+                .clip(CircleShape),
+            contentScale = ContentScale.Fit
+        )
 
         Spacer(modifier = Modifier.width(10.dp))
 
@@ -102,7 +96,11 @@ fun BrandHeader(
             text = APP_NAME,
             fontSize = size.sp,
             fontWeight = FontWeight.Bold,
-            color = Color(0xFF1877F2),
+            style = LocalTextStyle.current.copy(
+                brush = Brush.horizontalGradient(
+                    listOf(Color(0xFF1877F2), Color(0xFF1D8AF2))
+                )
+            ),
             letterSpacing = (-0.5).sp
         )
     }
@@ -448,6 +446,9 @@ fun RegisterView(
     var day by remember { mutableIntStateOf(15) }
     var month by remember { mutableIntStateOf(6) }
     var year by remember { mutableIntStateOf(2000) }
+    var showDayMenu by remember { mutableStateOf(false) }
+    var showMonthMenu by remember { mutableStateOf(false) }
+    var showYearMenu by remember { mutableStateOf(false) }
     var gender by remember { mutableStateOf("Female") }
 
     var error by remember { mutableStateOf("") }
@@ -623,41 +624,107 @@ fun RegisterView(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
-                        // Day
-                        Box(
-                            modifier = Modifier
-                                .weight(1f)
-                                .clip(RoundedCornerShape(8.dp))
-                                .background(AuthCardDark)
-                                .padding(12.dp),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Text(day.toString(), color = AuthTextPrimary, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                        // Day Selector
+                        Box(modifier = Modifier.weight(1f)) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(AuthCardDark)
+                                    .clickable { showDayMenu = true }
+                                    .padding(horizontal = 10.dp, vertical = 12.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(day.toString(), color = AuthTextPrimary, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                                Icon(Icons.Default.ArrowDropDown, contentDescription = null, tint = AuthTextSecondary, modifier = Modifier.size(18.dp))
+                            }
+                            DropdownMenu(
+                                expanded = showDayMenu,
+                                onDismissRequest = { showDayMenu = false },
+                                modifier = Modifier
+                                    .background(Color(0xFF0B1120))
+                                    .heightIn(max = 240.dp)
+                            ) {
+                                (1..31).forEach { d ->
+                                    DropdownMenuItem(
+                                        text = { Text(d.toString(), color = AuthTextPrimary) },
+                                        onClick = {
+                                            day = d
+                                            showDayMenu = false
+                                        }
+                                    )
+                                }
+                            }
                         }
 
-                        // Month
+                        // Month Selector
                         val months = listOf("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
-                        Box(
-                            modifier = Modifier
-                                .weight(1f)
-                                .clip(RoundedCornerShape(8.dp))
-                                .background(AuthCardDark)
-                                .padding(12.dp),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Text(months[(month - 1).coerceIn(0, 11)], color = AuthTextPrimary, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                        Box(modifier = Modifier.weight(1f)) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(AuthCardDark)
+                                    .clickable { showMonthMenu = true }
+                                    .padding(horizontal = 10.dp, vertical = 12.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(months[(month - 1).coerceIn(0, 11)], color = AuthTextPrimary, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                                Icon(Icons.Default.ArrowDropDown, contentDescription = null, tint = AuthTextSecondary, modifier = Modifier.size(18.dp))
+                            }
+                            DropdownMenu(
+                                expanded = showMonthMenu,
+                                onDismissRequest = { showMonthMenu = false },
+                                modifier = Modifier
+                                    .background(Color(0xFF0B1120))
+                                    .heightIn(max = 240.dp)
+                            ) {
+                                months.forEachIndexed { idx, m ->
+                                    DropdownMenuItem(
+                                        text = { Text(m, color = AuthTextPrimary) },
+                                        onClick = {
+                                            month = idx + 1
+                                            showMonthMenu = false
+                                        }
+                                    )
+                                }
+                            }
                         }
 
-                        // Year
-                        Box(
-                            modifier = Modifier
-                                .weight(1f)
-                                .clip(RoundedCornerShape(8.dp))
-                                .background(AuthCardDark)
-                                .padding(12.dp),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Text(year.toString(), color = AuthTextPrimary, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                        // Year Selector
+                        Box(modifier = Modifier.weight(1f)) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(AuthCardDark)
+                                    .clickable { showYearMenu = true }
+                                    .padding(horizontal = 10.dp, vertical = 12.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(year.toString(), color = AuthTextPrimary, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                                Icon(Icons.Default.ArrowDropDown, contentDescription = null, tint = AuthTextSecondary, modifier = Modifier.size(18.dp))
+                            }
+                            DropdownMenu(
+                                expanded = showYearMenu,
+                                onDismissRequest = { showYearMenu = false },
+                                modifier = Modifier
+                                    .background(Color(0xFF0B1120))
+                                    .heightIn(max = 240.dp)
+                            ) {
+                                (2012 downTo 1920).forEach { y ->
+                                    DropdownMenuItem(
+                                        text = { Text(y.toString(), color = AuthTextPrimary) },
+                                        onClick = {
+                                            year = y
+                                            showYearMenu = false
+                                        }
+                                    )
+                                }
+                            }
                         }
                     }
                 }
