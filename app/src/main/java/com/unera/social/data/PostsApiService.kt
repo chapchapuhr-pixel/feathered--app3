@@ -321,7 +321,7 @@ object PostsApiService {
             ?: obj.optString("name").takeIf { it.isNotBlank() && it != "null" }
             ?: authorObj?.optString("username")?.takeIf { it.isNotBlank() }
             ?: obj.optString("username").takeIf { it.isNotBlank() && it != "null" }
-            ?: if (userId == 1L) "Jastin Beda" else "User $userId"
+            ?: "User $userId"
 
         val username = authorObj?.optString("username")?.takeIf { it.isNotBlank() }
             ?: obj.optString("username").takeIf { it.isNotBlank() && it != "null" }
@@ -764,15 +764,16 @@ object PostsApiService {
         if (obj.optInt("is_deleted", 0) == 1) return null
 
         val id = obj.optLong("id", System.currentTimeMillis())
-        val userId = obj.optLong("user_id", 1L)
+        val userId = obj.optLong("user_id", 0L)
 
-        val authorName = if (userId == 1L) "Jastin Beda" else "User $userId"
-        val username = if (userId == 1L) "Jastin Beda" else "@user$userId"
-        val avatar = if (userId == 1L) {
-            "https://media.featheredsocial.site/uploads/images/1791201400713-120d7c17f3d2e8_original.jpg?t=1791201404884"
-        } else {
-            "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=800"
-        }
+        val authorName = obj.optString("author_name").takeIf { it.isNotBlank() && it != "null" }
+            ?: obj.optString("name").takeIf { it.isNotBlank() && it != "null" }
+            ?: "User $userId"
+        val username = obj.optString("username").takeIf { it.isNotBlank() && it != "null" }
+            ?: "@user$userId"
+        val avatar = obj.optString("author_avatar").takeIf { it.isNotBlank() && it != "null" }
+            ?: obj.optString("profile_image_url").takeIf { it.isNotBlank() && it != "null" }
+            ?: "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=800"
 
         val author = User(
             id = userId,

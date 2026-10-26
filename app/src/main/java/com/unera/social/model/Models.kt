@@ -112,7 +112,7 @@ data class User(
     val suspendedUntil: String? = null,
     val suspensionReason: String? = null,
     val isDeleted: Boolean = false,
-    val email: String = "jastin@feathered.social",
+    val email: String = "",
     val gender: String = "Male"
 )
 

@@ -772,7 +772,7 @@ object GroupsApiService {
 
         val authorName = obj.optString("name").takeIf { it.isNotBlank() && it != "null" }
             ?: obj.optString("username").takeIf { it.isNotBlank() && it != "null" }
-            ?: if (userId == 1L) "Jastin Beda" else "User $userId"
+            ?: "User $userId"
 
         val username = obj.optString("username").takeIf { it.isNotBlank() && it != "null" }
             ?: "@${authorName.lowercase().replace(" ", "")}"

@@ -572,7 +572,7 @@ object VideosApiService {
         val authorName = userObj?.optString("name")?.takeIf { it.isNotBlank() }
             ?: userObj?.optString("username")?.takeIf { it.isNotBlank() }
             ?: obj.optString("author_name").takeIf { it.isNotBlank() && it != "null" }
-            ?: if (userId == 1L) "Jastin Beda" else "User $userId"
+            ?: "User $userId"
 
         val username = userObj?.optString("username")?.takeIf { it.isNotBlank() }
             ?: "@${authorName.lowercase().replace(" ", "")}"
@@ -582,7 +582,7 @@ object VideosApiService {
             ?: obj.optString("author_avatar").takeIf { it.isNotBlank() && it != "null" }
             ?: "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=800"
 
-        val isVerified = userObj?.optBoolean("is_verified", false) ?: (userId == 1L)
+        val isVerified = userObj?.optBoolean("is_verified", false) ?: false
         val author = User(
             id = userId,
             name = authorName,

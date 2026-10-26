@@ -115,8 +115,8 @@ fun BrandHeader(
 fun AuthScreen(
     initialMode: String = "login",
     onClose: () -> Unit,
-    onLogin: (email: String, pass: String) -> Boolean,
-    onSignup: (
+    onLogin: suspend (email: String, pass: String) -> Pair<Boolean, String?>,
+    onSignup: suspend (
         username: String,
         email: String,
         pass: String,
@@ -124,7 +124,7 @@ fun AuthScreen(
         location: String,
         birthDate: String,
         gender: String
-    ) -> Boolean,
+    ) -> Pair<Boolean, String?>,
     onContinueAsGuest: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -170,7 +170,7 @@ fun LoginView(
     onNavigateToRegister: () -> Unit,
     onNavigateToForgotPassword: () -> Unit,
     onClose: () -> Unit,
-    onLoginSubmit: (email: String, pass: String) -> Boolean
+    onLoginSubmit: suspend (email: String, pass: String) -> Pair<Boolean, String?>
 ) {
     var email by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
@@ -305,11 +305,10 @@ fun LoginView(
                             }
                             loading = true
                             coroutineScope.launch {
-                                delay(600)
-                                val ok = onLoginSubmit(email, password)
+                                val (ok, errorMsg) = onLoginSubmit(email, password)
                                 loading = false
                                 if (!ok) {
-                                    error = "Login failed. Please check your credentials."
+                                    error = errorMsg ?: "Login failed. Please check your credentials."
                                 }
                             }
                         },
@@ -426,7 +425,7 @@ fun LoginView(
 @Composable
 fun RegisterView(
     onBackToLogin: () -> Unit,
-    onRegisterSubmit: (
+    onRegisterSubmit: suspend (
         username: String,
         email: String,
         pass: String,
@@ -434,7 +433,7 @@ fun RegisterView(
         location: String,
         birthDate: String,
         gender: String
-    ) -> Boolean
+    ) -> Pair<Boolean, String?>
 ) {
     var firstName by remember { mutableStateOf("") }
     var surname by remember { mutableStateOf("") }
@@ -723,8 +722,7 @@ fun RegisterView(
                         }
                         loading = true
                         coroutineScope.launch {
-                            delay(600)
-                            val ok = onRegisterSubmit(
+                            val (ok, errorMsg) = onRegisterSubmit(
                                 fullName,
                                 email,
                                 password,
@@ -735,7 +733,7 @@ fun RegisterView(
                             )
                             loading = false
                             if (!ok) {
-                                error = "Signup failed. Please try again."
+                                error = errorMsg ?: "Signup failed. Please try again."
                             }
                         }
                     },

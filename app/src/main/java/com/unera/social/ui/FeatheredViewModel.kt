@@ -1,6 +1,7 @@
 package com.unera.social.ui
 
-import androidx.lifecycle.ViewModel
+import android.app.Application
+import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.unera.social.data.EventsApiService
 import com.unera.social.data.GroupsApiService
@@ -10,6 +11,7 @@ import com.unera.social.data.MockData
 import com.unera.social.data.PostsApiService
 import com.unera.social.data.StoriesApiService
 import com.unera.social.data.UserApiService
+import com.unera.social.data.UserSessionManager
 import com.unera.social.data.VideosApiService
 import android.content.Context
 import android.net.Uri
@@ -190,12 +192,61 @@ data class FeatheredUiState(
     val isAppLoading: Boolean = false
 )
 
-class FeatheredViewModel : ViewModel() {
+class FeatheredViewModel(application: Application) : AndroidViewModel(application) {
 
     private val _uiState = MutableStateFlow(FeatheredUiState())
     val uiState: StateFlow<FeatheredUiState> = _uiState.asStateFlow()
 
     init {
+        // Session restore on app load matching App.tsx auto-on-app-load
+        val context = getApplication<Application>().applicationContext
+        val savedUser = UserSessionManager.getSavedUser(context)
+        if (savedUser != null && savedUser.id > 0L) {
+            _uiState.update {
+                it.copy(
+                    currentUser = savedUser,
+                    isLoggedIn = true,
+                    isGuest = false,
+                    showAuthModal = false
+                )
+            }
+            // Refresh fresh profile from /api/users?id=<id> in background
+            viewModelScope.launch {
+                try {
+                    val fresh = UserApiService.fetchUserById(savedUser.id)
+                    if (fresh != null) {
+                        val updated = savedUser.copy(
+                            name = fresh.name.ifBlank { savedUser.name },
+                            username = fresh.username.ifBlank { savedUser.username },
+                            email = if (fresh.email.isNotBlank()) fresh.email else savedUser.email,
+                            profileImageUrl = fresh.profileImageUrl.ifBlank { savedUser.profileImageUrl },
+                            coverImageUrl = fresh.coverImageUrl.ifBlank { savedUser.coverImageUrl },
+                            bio = fresh.bio.ifBlank { savedUser.bio },
+                            location = fresh.location.ifBlank { savedUser.location },
+                            isVerified = fresh.isVerified || savedUser.isVerified,
+                            role = fresh.role.ifBlank { savedUser.role },
+                            followersCount = if (fresh.followersCount > 0) fresh.followersCount else savedUser.followersCount,
+                            followingCount = if (fresh.followingCount > 0) fresh.followingCount else savedUser.followingCount
+                        )
+                        _uiState.update { it.copy(currentUser = updated) }
+                        UserSessionManager.saveUser(context, updated)
+                    }
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                }
+            }
+        } else {
+            // Guest mode: unauthenticated user without login, using clean guest profile (id=0L)
+            _uiState.update {
+                it.copy(
+                    currentUser = MockData.currentUser,
+                    isLoggedIn = false,
+                    isGuest = true,
+                    showAuthModal = false
+                )
+            }
+        }
+
         fetchPeopleYouMayKnow()
         fetchLiveUsers()
         refreshLiveProducts()
@@ -3326,7 +3377,9 @@ class FeatheredViewModel : ViewModel() {
     fun continueAsGuest() {
         _uiState.update {
             it.copy(
+                currentUser = MockData.currentUser,
                 isGuest = true,
+                isLoggedIn = false,
                 showAuthModal = false,
                 currentScreen = Screen.FEED
             )
@@ -3334,24 +3387,45 @@ class FeatheredViewModel : ViewModel() {
         refreshFeed()
     }
 
-    fun loginUser(email: String, pass: String): Boolean {
-        val matchedUser = _uiState.value.users.find { it.email.equals(email.trim(), ignoreCase = true) }
-            ?: _uiState.value.currentUser.copy(email = email.trim())
-
-        _uiState.update { state ->
-            state.copy(
-                currentUser = matchedUser,
-                isLoggedIn = true,
-                isGuest = false,
-                showAuthModal = false,
-                currentScreen = Screen.FEED
-            )
+    suspend fun loginUser(email: String, pass: String): Pair<Boolean, String?> {
+        val trimmedEmail = email.trim()
+        if (trimmedEmail.isBlank() || pass.isBlank()) {
+            return Pair(false, "Please enter both email and password.")
         }
-        refreshFeed()
-        return true
+
+        val result = UserApiService.loginUser(trimmedEmail, pass)
+        return if (result.isSuccess) {
+            val liveUser = result.getOrThrow()
+            val context = getApplication<Application>().applicationContext
+            UserSessionManager.saveUser(context, liveUser)
+
+            _uiState.update { state ->
+                val updatedUsers = if (state.users.any { it.id == liveUser.id }) {
+                    state.users.map { if (it.id == liveUser.id) liveUser else it }
+                } else {
+                    listOf(liveUser) + state.users
+                }
+                state.copy(
+                    currentUser = liveUser,
+                    users = updatedUsers,
+                    isLoggedIn = true,
+                    isGuest = false,
+                    showAuthModal = false,
+                    currentScreen = Screen.FEED
+                )
+            }
+            // Fetch live home feed for logged in user from /api/feeds?userId=<id>&limit=50
+            refreshFeed()
+            refreshVideos()
+            fetchPeopleYouMayKnow()
+            Pair(true, null)
+        } else {
+            val errorMsg = result.exceptionOrNull()?.message ?: "Login failed. Please check your credentials."
+            Pair(false, errorMsg)
+        }
     }
 
-    fun registerUser(
+    suspend fun registerUser(
         username: String,
         email: String,
         pass: String,
@@ -3359,37 +3433,61 @@ class FeatheredViewModel : ViewModel() {
         location: String,
         birthDate: String,
         gender: String
-    ): Boolean {
-        val newUser = User(
-            id = System.currentTimeMillis(),
+    ): Pair<Boolean, String?> {
+        val trimmedEmail = email.trim()
+        if (username.isBlank() || trimmedEmail.isBlank() || pass.length < 6) {
+            return Pair(false, "Please complete all fields with a valid password (min 6 characters).")
+        }
+
+        val result = UserApiService.registerUser(
             name = username.trim(),
-            username = username.lowercase().replace(" ", "_"),
-            email = email.trim(),
-            profileImageUrl = "https://ui-avatars.com/api/?name=${username.replace(" ", "+")}&background=1877F2&color=fff&bold=true",
+            username = username.trim(),
+            email = trimmedEmail,
+            pass = pass,
+            nationality = nationality.ifBlank { "Tanzania" },
             location = location.ifBlank { "Dar es Salaam, Tanzania" },
-            gender = gender,
             birthDate = birthDate,
-            isOnline = true
+            gender = gender.ifBlank { "Male" }
         )
 
-        _uiState.update { state ->
-            state.copy(
-                currentUser = newUser,
-                users = listOf(newUser) + state.users,
-                isLoggedIn = true,
-                isGuest = false,
-                showAuthModal = false,
-                currentScreen = Screen.FEED
-            )
+        return if (result.isSuccess) {
+            val liveUser = result.getOrThrow()
+            val context = getApplication<Application>().applicationContext
+            UserSessionManager.saveUser(context, liveUser)
+
+            _uiState.update { state ->
+                val updatedUsers = if (state.users.any { it.id == liveUser.id }) {
+                    state.users.map { if (it.id == liveUser.id) liveUser else it }
+                } else {
+                    listOf(liveUser) + state.users
+                }
+                state.copy(
+                    currentUser = liveUser,
+                    users = updatedUsers,
+                    isLoggedIn = true,
+                    isGuest = false,
+                    showAuthModal = false,
+                    currentScreen = Screen.FEED
+                )
+            }
+            refreshFeed()
+            refreshVideos()
+            fetchPeopleYouMayKnow()
+            Pair(true, null)
+        } else {
+            val errorMsg = result.exceptionOrNull()?.message ?: "Registration failed. Please try again."
+            Pair(false, errorMsg)
         }
-        refreshFeed()
-        return true
     }
 
     fun logoutUser() {
+        val context = getApplication<Application>().applicationContext
+        UserSessionManager.clearUser(context)
         _uiState.update { state ->
             state.copy(
+                currentUser = MockData.currentUser, // Reset to Guest user (id = 0L)
                 isLoggedIn = false,
+                isGuest = true,
                 showAuthModal = true,
                 authMode = "login"
             )
