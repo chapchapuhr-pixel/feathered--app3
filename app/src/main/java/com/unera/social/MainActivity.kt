@@ -530,6 +530,8 @@ fun FeatheredApp(
                         currentUser = uiState.currentUser,
                         stories = uiState.stories,
                         onBack = { viewModel.setScreen(Screen.FEED) },
+                        onAddStoryClick = { viewModel.setShowCreateStoryDialog(true) },
+                        onStoryClick = { story -> viewModel.setSelectedStory(story) },
                         modifier = screenModifier
                     )
                 }
@@ -871,18 +873,29 @@ fun FeatheredApp(
 
     // Create Story Modal Dialog (matching Web CreateStoryModal in Storypage)
     if (uiState.showCreateStoryDialog) {
+        val context = androidx.compose.ui.platform.LocalContext.current
         CreateStoryDialog(
             currentUser = uiState.currentUser,
             onDismiss = { viewModel.setShowCreateStoryDialog(false) },
-            onCreateStory = { mediaUrl, type, textContent, backgroundStyle, musicTitle ->
-                viewModel.createStory(
-                    mediaUrl = mediaUrl,
+            onSubmitStory = { mediaUri, isVideo, type, textContent, backgroundStyle, musicTitle, musicUrl ->
+                viewModel.uploadStoryAndPost(
+                    context = context,
+                    mediaUri = mediaUri,
+                    isVideo = isVideo,
                     type = type,
                     textContent = textContent,
                     backgroundStyle = backgroundStyle,
-                    musicTitle = musicTitle
+                    musicTitle = musicTitle,
+                    musicUrl = musicUrl,
+                    onSuccess = {
+                        android.widget.Toast.makeText(context, "Story posted successfully!", android.widget.Toast.LENGTH_SHORT).show()
+                    },
+                    onError = { err ->
+                        android.widget.Toast.makeText(context, err, android.widget.Toast.LENGTH_LONG).show()
+                    }
                 )
-            }
+            },
+            isSubmitting = uiState.isStoriesLoading
         )
     }
 

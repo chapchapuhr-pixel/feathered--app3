@@ -28,8 +28,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
-import com.unera.social.ui.components.VerifiedBadge
 import androidx.compose.ui.platform.testTag
+import com.unera.social.ui.components.VerifiedBadge
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -43,6 +43,12 @@ import com.unera.social.model.User
 import com.unera.social.ui.theme.*
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import android.net.Uri
+import android.widget.Toast
+import android.media.MediaMetadataRetriever
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.activity.result.PickVisualMediaRequest
 
 /**
  * StoryViewerDialog
@@ -962,24 +968,87 @@ fun StoryDiscussionsModal(
 fun CreateStoryDialog(
     currentUser: User,
     onDismiss: () -> Unit,
-    onCreateStory: (mediaUrl: String, type: String, textContent: String, backgroundStyle: String, musicTitle: String?) -> Unit
+    onSubmitStory: (
+        mediaUri: Uri?,
+        isVideo: Boolean,
+        type: String,
+        textContent: String,
+        backgroundStyle: String,
+        musicTitle: String?,
+        musicUrl: String?
+    ) -> Unit,
+    isSubmitting: Boolean = false
 ) {
+    val context = LocalContext.current
     var mode by remember { mutableStateOf("text") } // "text" or "media"
     var textContent by remember { mutableStateOf("") }
-    var mediaUrl by remember { mutableStateOf("") }
+    var selectedMediaUri by remember { mutableStateOf<Uri?>(null) }
+    var isVideo by remember { mutableStateOf(false) }
+    var videoDurationSec by remember { mutableDoubleStateOf(0.0) }
+    var directUrl by remember { mutableStateOf("") }
     var selectedMusic by remember { mutableStateOf<String?>("Asake - Lonely At The Top") }
     var selectedGradientIndex by remember { mutableIntStateOf(0) }
+    var localSubmitting by remember { mutableStateOf(false) }
 
-    val gradients = listOf(
-        "linear-gradient(45deg, #1877F2, #0055FF)" to listOf(Color(0xFF1877F2), Color(0xFF0055FF)),
-        "linear-gradient(45deg, #F3425F, #E41E3F)" to listOf(Color(0xFFF3425F), Color(0xFFE41E3F)),
-        "linear-gradient(45deg, #45BD62, #31A24C)" to listOf(Color(0xFF45BD62), Color(0xFF31A24C)),
-        "linear-gradient(45deg, #F7B928, #E3A300)" to listOf(Color(0xFFF7B928), Color(0xFFE3A300)),
-        "linear-gradient(45deg, #A033FF, #7B1FA2)" to listOf(Color(0xFFA033FF), Color(0xFF7B1FA2))
-    )
+    val gradients = remember {
+        listOf(
+            "linear-gradient(45deg, #1877F2, #0055FF)" to listOf(Color(0xFF1877F2), Color(0xFF0055FF)),
+            "linear-gradient(45deg, #F3425F, #E41E3F)" to listOf(Color(0xFFF3425F), Color(0xFFE41E3F)),
+            "linear-gradient(45deg, #45BD62, #31A24C)" to listOf(Color(0xFF45BD62), Color(0xFF31A24C)),
+            "linear-gradient(45deg, #F7B928, #E3A300)" to listOf(Color(0xFFF7B928), Color(0xFFE3A300)),
+            "linear-gradient(45deg, #A033FF, #7B1FA2)" to listOf(Color(0xFFA033FF), Color(0xFF7B1FA2))
+        )
+    }
+
+    val availableSoundtracks = remember {
+        listOf(
+            "Asake - Lonely At The Top",
+            "Burna Boy - City Boys",
+            "Ayra Starr - Rush",
+            "Davido - Unavailable",
+            "Ruger - Asiwaju",
+            "Rema - Calm Down"
+        )
+    }
+
+    val pickMediaLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.PickVisualMedia()
+    ) { uri ->
+        if (uri != null) {
+            val mime = try { context.contentResolver.getType(uri) ?: "" } catch (_: Exception) { "" }
+            val video = mime.startsWith("video") || uri.toString().contains(".mp4", ignoreCase = true)
+            if (video) {
+                val retriever = MediaMetadataRetriever()
+                var durSec = 0.0
+                try {
+                    retriever.setDataSource(context, uri)
+                    val durMs = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull() ?: 0L
+                    durSec = durMs / 1000.0
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                } finally {
+                    try { retriever.release() } catch (_: Exception) {}
+                }
+
+                if (durSec > 90.0) {
+                    Toast.makeText(context, "Story video must be 1 minute 30 seconds or less", Toast.LENGTH_LONG).show()
+                    return@rememberLauncherForActivityResult
+                }
+                isVideo = true
+                videoDurationSec = durSec
+                selectedMediaUri = uri
+            } else {
+                isVideo = false
+                videoDurationSec = 0.0
+                selectedMediaUri = uri
+            }
+        }
+    }
+
+    val busy = isSubmitting || localSubmitting
 
     Dialog(
-        onDismissRequest = onDismiss,
+        onDismissRequest = { if (!busy) onDismiss() },
         properties = DialogProperties(usePlatformDefaultWidth = false)
     ) {
         Surface(
@@ -996,12 +1065,13 @@ fun CreateStoryDialog(
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(16.dp),
+                        .padding(horizontal = 16.dp, vertical = 12.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
                     IconButton(
-                        onClick = onDismiss,
+                        onClick = { if (!busy) onDismiss() },
+                        enabled = !busy,
                         modifier = Modifier
                             .size(38.dp)
                             .clip(CircleShape)
@@ -1014,7 +1084,7 @@ fun CreateStoryDialog(
                         )
                     }
 
-                    // Mode Switcher Pills (Text vs Media)
+                    // Mode Switcher Pills (Text vs Photo/Video)
                     Row(
                         modifier = Modifier
                             .clip(RoundedCornerShape(20.dp))
@@ -1028,7 +1098,7 @@ fun CreateStoryDialog(
                                 modifier = Modifier
                                     .clip(RoundedCornerShape(16.dp))
                                     .background(if (active) Color(0xFF1877F2) else Color.Transparent)
-                                    .clickable { mode = m }
+                                    .clickable(enabled = !busy) { mode = m }
                                     .padding(horizontal = 14.dp, vertical = 6.dp)
                             ) {
                                 Text(
@@ -1042,27 +1112,29 @@ fun CreateStoryDialog(
                     }
 
                     // Share button
+                    val canShare = if (mode == "text") {
+                        textContent.isNotBlank()
+                    } else {
+                        selectedMediaUri != null || directUrl.isNotBlank()
+                    }
+
                     Button(
                         onClick = {
-                            if (mode == "text" && textContent.isNotBlank()) {
-                                onCreateStory(
-                                    "",
-                                    "text",
-                                    textContent,
-                                    gradients[selectedGradientIndex].first,
-                                    selectedMusic
-                                )
-                            } else if (mode == "media" && mediaUrl.isNotBlank()) {
-                                onCreateStory(
-                                    mediaUrl,
-                                    "image",
-                                    "",
-                                    "",
-                                    selectedMusic
-                                )
-                            }
+                            if (!canShare || busy) return@Button
+                            localSubmitting = true
+                            val finalType = if (mode == "text") "text" else if (isVideo) "video" else "image"
+                            val finalBg = if (mode == "text") gradients[selectedGradientIndex].first else ""
+                            onSubmitStory(
+                                selectedMediaUri,
+                                isVideo,
+                                finalType,
+                                textContent,
+                                finalBg,
+                                selectedMusic,
+                                null
+                            )
                         },
-                        enabled = (mode == "text" && textContent.isNotBlank()) || (mode == "media" && mediaUrl.isNotBlank()),
+                        enabled = canShare && !busy,
                         colors = ButtonDefaults.buttonColors(
                             containerColor = Color(0xFF1877F2),
                             disabledContainerColor = Color(0xFF1E293B)
@@ -1070,7 +1142,17 @@ fun CreateStoryDialog(
                         shape = RoundedCornerShape(20.dp),
                         contentPadding = PaddingValues(horizontal = 16.dp, vertical = 6.dp)
                     ) {
-                        Text("Share", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                        if (busy) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(16.dp),
+                                color = Color.White,
+                                strokeWidth = 2.dp
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Sharing…", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                        } else {
+                            Text("Share", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                        }
                     }
                 }
 
@@ -1079,12 +1161,13 @@ fun CreateStoryDialog(
                     modifier = Modifier
                         .fillMaxWidth()
                         .weight(1f)
-                        .padding(horizontal = 24.dp)
+                        .padding(horizontal = 20.dp, vertical = 6.dp)
                         .clip(RoundedCornerShape(20.dp))
                         .border(1.dp, Color(0xFF1E293B), RoundedCornerShape(20.dp)),
                     contentAlignment = Alignment.Center
                 ) {
                     if (mode == "text") {
+                        // Text Mode: Dynamic gradient preview canvas
                         Box(
                             modifier = Modifier
                                 .fillMaxSize()
@@ -1098,7 +1181,7 @@ fun CreateStoryDialog(
                                 placeholder = {
                                     Text(
                                         "Start typing your story…",
-                                        color = Color.White.copy(alpha = 0.6f),
+                                        color = Color.White.copy(alpha = 0.65f),
                                         fontSize = 22.sp,
                                         fontWeight = FontWeight.Bold,
                                         textAlign = TextAlign.Center
@@ -1112,21 +1195,103 @@ fun CreateStoryDialog(
                                 ),
                                 colors = OutlinedTextFieldDefaults.colors(
                                     focusedBorderColor = Color.Transparent,
-                                    unfocusedBorderColor = Color.Transparent
+                                    unfocusedBorderColor = Color.Transparent,
+                                    focusedContainerColor = Color.Transparent,
+                                    unfocusedContainerColor = Color.Transparent
                                 ),
                                 modifier = Modifier.fillMaxWidth()
                             )
                         }
                     } else {
-                        // Media mode
-                        if (mediaUrl.isNotBlank()) {
-                            AsyncImage(
-                                model = mediaUrl,
-                                contentDescription = "Preview",
-                                contentScale = ContentScale.Crop,
-                                modifier = Modifier.fillMaxSize()
-                            )
+                        // Media Mode: Photo or Video from device or URL
+                        if (selectedMediaUri != null) {
+                            Box(modifier = Modifier.fillMaxSize()) {
+                                AsyncImage(
+                                    model = selectedMediaUri,
+                                    contentDescription = "Selected media preview",
+                                    contentScale = ContentScale.Crop,
+                                    modifier = Modifier.fillMaxSize()
+                                )
+
+                                // Video badge if it's a video
+                                if (isVideo) {
+                                    Surface(
+                                        shape = RoundedCornerShape(12.dp),
+                                        color = Color.Black.copy(alpha = 0.7f),
+                                        modifier = Modifier
+                                            .align(Alignment.TopStart)
+                                            .padding(12.dp)
+                                    ) {
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.Videocam,
+                                                contentDescription = null,
+                                                tint = Color(0xFF38BDF8),
+                                                modifier = Modifier.size(16.dp)
+                                            )
+                                            Text(
+                                                text = if (videoDurationSec > 0) "${videoDurationSec.toInt()}s / 90s max" else "Story Video",
+                                                color = Color.White,
+                                                fontSize = 11.sp,
+                                                fontWeight = FontWeight.SemiBold
+                                            )
+                                        }
+                                    }
+                                }
+
+                                // Clear media button
+                                IconButton(
+                                    onClick = {
+                                        selectedMediaUri = null
+                                        isVideo = false
+                                        videoDurationSec = 0.0
+                                    },
+                                    modifier = Modifier
+                                        .align(Alignment.TopEnd)
+                                        .padding(12.dp)
+                                        .size(32.dp)
+                                        .clip(CircleShape)
+                                        .background(Color.Black.copy(alpha = 0.65f))
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Close,
+                                        contentDescription = "Remove media",
+                                        tint = Color.White,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                }
+                            }
+                        } else if (directUrl.isNotBlank()) {
+                            Box(modifier = Modifier.fillMaxSize()) {
+                                AsyncImage(
+                                    model = directUrl,
+                                    contentDescription = "Direct URL preview",
+                                    contentScale = ContentScale.Crop,
+                                    modifier = Modifier.fillMaxSize()
+                                )
+                                IconButton(
+                                    onClick = { directUrl = "" },
+                                    modifier = Modifier
+                                        .align(Alignment.TopEnd)
+                                        .padding(12.dp)
+                                        .size(32.dp)
+                                        .clip(CircleShape)
+                                        .background(Color.Black.copy(alpha = 0.65f))
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Close,
+                                        contentDescription = "Remove URL",
+                                        tint = Color.White,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                }
+                            }
                         } else {
+                            // Empty picker card
                             Column(
                                 horizontalAlignment = Alignment.CenterHorizontally,
                                 verticalArrangement = Arrangement.Center,
@@ -1135,24 +1300,91 @@ fun CreateStoryDialog(
                                     .background(Color(0xFF0F172A))
                                     .padding(20.dp)
                             ) {
-                                Icon(
-                                    imageVector = Icons.Default.AddPhotoAlternate,
-                                    contentDescription = null,
-                                    tint = Color(0xFF1877F2),
-                                    modifier = Modifier.size(54.dp)
-                                )
-                                Spacer(modifier = Modifier.height(12.dp))
+                                Box(
+                                    modifier = Modifier
+                                        .size(68.dp)
+                                        .clip(CircleShape)
+                                        .background(Color(0xFF1877F2).copy(alpha = 0.15f)),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.AddPhotoAlternate,
+                                        contentDescription = null,
+                                        tint = Color(0xFF1877F2),
+                                        modifier = Modifier.size(36.dp)
+                                    )
+                                }
+
+                                Spacer(modifier = Modifier.height(14.dp))
+
                                 Text(
-                                    "Enter an image or video URL",
+                                    "Add Story Media",
                                     color = Color.White,
                                     fontWeight = FontWeight.Bold,
-                                    fontSize = 16.sp
+                                    fontSize = 17.sp
                                 )
+
+                                Spacer(modifier = Modifier.height(4.dp))
+
+                                Text(
+                                    "Select a photo (up to 10MB) or video (up to 90s) from your device",
+                                    color = Color(0xFF94A3B8),
+                                    fontSize = 12.sp,
+                                    textAlign = TextAlign.Center,
+                                    modifier = Modifier.padding(horizontal = 16.dp)
+                                )
+
+                                Spacer(modifier = Modifier.height(20.dp))
+
+                                Row(
+                                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                                ) {
+                                    Button(
+                                        onClick = {
+                                            pickMediaLauncher.launch(
+                                                PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+                                            )
+                                        },
+                                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1877F2)),
+                                        shape = RoundedCornerShape(12.dp),
+                                        contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp)
+                                    ) {
+                                        Icon(Icons.Default.PhotoLibrary, contentDescription = null, modifier = Modifier.size(16.dp))
+                                        Spacer(modifier = Modifier.width(6.dp))
+                                        Text("Choose Photo", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                    }
+
+                                    OutlinedButton(
+                                        onClick = {
+                                            pickMediaLauncher.launch(
+                                                PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.VideoOnly)
+                                            )
+                                        },
+                                        colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFF38BDF8)),
+                                        border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF38BDF8)),
+                                        shape = RoundedCornerShape(12.dp),
+                                        contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp)
+                                    ) {
+                                        Icon(Icons.Default.Videocam, contentDescription = null, modifier = Modifier.size(16.dp))
+                                        Spacer(modifier = Modifier.width(6.dp))
+                                        Text("Choose Video", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                    }
+                                }
+
+                                Spacer(modifier = Modifier.height(16.dp))
+
+                                Text(
+                                    "— or enter media URL —",
+                                    color = Color(0xFF64748B),
+                                    fontSize = 11.sp
+                                )
+
                                 Spacer(modifier = Modifier.height(8.dp))
+
                                 OutlinedTextField(
-                                    value = mediaUrl,
-                                    onValueChange = { mediaUrl = it },
-                                    placeholder = { Text("https://example.com/photo.jpg", color = Color(0xFF64748B), fontSize = 12.sp) },
+                                    value = directUrl,
+                                    onValueChange = { directUrl = it },
+                                    placeholder = { Text("https://example.com/story.jpg", color = Color(0xFF64748B), fontSize = 12.sp) },
                                     singleLine = true,
                                     shape = RoundedCornerShape(12.dp),
                                     colors = OutlinedTextFieldDefaults.colors(
@@ -1163,19 +1395,19 @@ fun CreateStoryDialog(
                                         focusedBorderColor = Color(0xFF1877F2),
                                         unfocusedBorderColor = Color(0xFF334155)
                                     ),
-                                    modifier = Modifier.fillMaxWidth()
+                                    modifier = Modifier.fillMaxWidth(0.9f)
                                 )
                             }
                         }
                     }
                 }
 
-                // Controls: Gradient Selectors for Text stories, Music selection pill
+                // Controls: Gradient Selectors for Text stories, Caption for media, Music selection pill
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(14.dp)
+                        .padding(horizontal = 16.dp, vertical = 8.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
                     if (mode == "text") {
                         // Color gradient selectors
@@ -1184,7 +1416,7 @@ fun CreateStoryDialog(
                             modifier = Modifier.fillMaxWidth()
                         ) {
                             items(gradients.indices.toList()) { idx ->
-                                val (raw, colors) = gradients[idx]
+                                val (_, colors) = gradients[idx]
                                 val selected = selectedGradientIndex == idx
                                 Box(
                                     modifier = Modifier
@@ -1200,6 +1432,24 @@ fun CreateStoryDialog(
                                 )
                             }
                         }
+                    } else if (selectedMediaUri != null || directUrl.isNotBlank()) {
+                        // Caption field for photo/video
+                        OutlinedTextField(
+                            value = textContent,
+                            onValueChange = { textContent = it },
+                            placeholder = { Text("Add caption to story…", color = Color(0xFF64748B), fontSize = 12.sp) },
+                            singleLine = true,
+                            shape = RoundedCornerShape(12.dp),
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedContainerColor = Color(0xFF1E293B),
+                                unfocusedContainerColor = Color(0xFF1E293B),
+                                focusedTextColor = Color.White,
+                                unfocusedTextColor = Color.White,
+                                focusedBorderColor = Color(0xFF1877F2),
+                                unfocusedBorderColor = Color(0xFF334155)
+                            ),
+                            modifier = Modifier.fillMaxWidth()
+                        )
                     }
 
                     // Music selector bar
@@ -1214,7 +1464,8 @@ fun CreateStoryDialog(
                     ) {
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            modifier = Modifier.weight(1f)
                         ) {
                             Icon(
                                 imageVector = Icons.Default.MusicNote,
@@ -1227,7 +1478,9 @@ fun CreateStoryDialog(
                                     text = selectedMusic ?: "No Music",
                                     fontSize = 13.sp,
                                     fontWeight = FontWeight.Bold,
-                                    color = Color.White
+                                    color = Color.White,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
                                 )
                                 Text(
                                     text = "Story Soundtrack",
@@ -1237,21 +1490,62 @@ fun CreateStoryDialog(
                             }
                         }
 
-                        TextButton(
-                            onClick = {
-                                selectedMusic = if (selectedMusic == null) "Asake - Lonely At The Top" else null
+                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            // Cycle through soundtracks
+                            TextButton(
+                                onClick = {
+                                    val currentIdx = availableSoundtracks.indexOf(selectedMusic)
+                                    selectedMusic = if (currentIdx < 0) {
+                                        availableSoundtracks.first()
+                                    } else {
+                                        val nextIdx = (currentIdx + 1) % (availableSoundtracks.size + 1)
+                                        if (nextIdx < availableSoundtracks.size) availableSoundtracks[nextIdx] else null
+                                    }
+                                }
+                            ) {
+                                Text(
+                                    text = if (selectedMusic == null) "Add Song" else "Change",
+                                    color = Color(0xFF1877F2),
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
                             }
-                        ) {
-                            Text(
-                                text = if (selectedMusic != null) "Remove" else "Add Song",
-                                color = if (selectedMusic != null) Color(0xFFF43F5E) else Color(0xFF1877F2),
-                                fontSize = 12.sp,
-                                fontWeight = FontWeight.Bold
-                            )
+
+                            if (selectedMusic != null) {
+                                TextButton(
+                                    onClick = { selectedMusic = null }
+                                ) {
+                                    Text(
+                                        text = "Remove",
+                                        color = Color(0xFFF43F5E),
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+                            }
                         }
                     }
                 }
             }
         }
     }
+}
+
+/**
+ * Backward-compatible overload for CreateStoryDialog
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun CreateStoryDialog(
+    currentUser: User,
+    onDismiss: () -> Unit,
+    onCreateStory: (mediaUrl: String, type: String, textContent: String, backgroundStyle: String, musicTitle: String?) -> Unit
+) {
+    CreateStoryDialog(
+        currentUser = currentUser,
+        onDismiss = onDismiss,
+        onSubmitStory = { uri, isVideo, type, text, bg, music, _ ->
+            onCreateStory(uri?.toString() ?: "", type, text, bg, music)
+        }
+    )
 }

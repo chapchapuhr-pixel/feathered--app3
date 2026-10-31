@@ -70,6 +70,8 @@ object StoriesApiService {
         textContent: String? = null,
         mediaUrl: String? = null,
         mediaUrls: List<String> = emptyList(),
+        mediaTypes: List<String> = emptyList(),
+        mediaMeta: List<Map<String, Any?>> = emptyList(),
         backgroundStyle: String? = null,
         musicUrl: String? = null,
         musicTitle: String? = null,
@@ -84,8 +86,8 @@ object StoriesApiService {
             val conn = (url.openConnection() as HttpURLConnection).apply {
                 requestMethod = "POST"
                 doOutput = true
-                connectTimeout = 10000
-                readTimeout = 10000
+                connectTimeout = 15000
+                readTimeout = 15000
                 setRequestProperty("Content-Type", "application/json; charset=utf-8")
                 setRequestProperty("Accept", "application/json")
                 setRequestProperty("User-Agent", USER_AGENT)
@@ -102,6 +104,22 @@ object StoriesApiService {
                     mediaUrls.forEach { arr.put(it) }
                     put("media_urls", arr)
                 }
+                if (mediaTypes.isNotEmpty()) {
+                    val arr = JSONArray()
+                    mediaTypes.forEach { arr.put(it) }
+                    put("media_types", arr)
+                }
+                if (mediaMeta.isNotEmpty()) {
+                    val arr = JSONArray()
+                    mediaMeta.forEach { metaMap ->
+                        val obj = JSONObject()
+                        metaMap.forEach { (k, v) ->
+                            if (v != null) obj.put(k, v) else obj.put(k, JSONObject.NULL)
+                        }
+                        arr.put(obj)
+                    }
+                    put("media_meta", arr)
+                }
                 if (!backgroundStyle.isNullOrBlank()) put("background_style", backgroundStyle)
                 if (!musicUrl.isNullOrBlank()) put("music_url", musicUrl)
                 if (!musicTitle.isNullOrBlank()) put("music_title", musicTitle)
@@ -110,6 +128,10 @@ object StoriesApiService {
                 put("music_duration", musicDuration)
                 put("effect_id", effectId)
                 put("duration", duration)
+                val isoDate = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", java.util.Locale.US).apply {
+                    timeZone = java.util.TimeZone.getTimeZone("UTC")
+                }.format(java.util.Date())
+                put("created_at", isoDate)
             }
 
             OutputStreamWriter(conn.outputStream).use { it.write(payload.toString()) }

@@ -69,6 +69,13 @@ object MediaUploadHelper {
         val durationSec: Double
     )
 
+    data class StoryMediaBundleResult(
+        val mediaUrl: String,
+        val mediaUrls: List<String>,
+        val mediaTypes: List<String>,
+        val mediaMeta: List<Map<String, Any?>>
+    )
+
     data class UploadedMediaResult(
         val originalUrl: String,
         val url1080: String?,
@@ -641,5 +648,255 @@ object MediaUploadHelper {
                 durationSec = null
             )
         }
+    }
+
+    /**
+     * Exact Feathered Web Story Image Variant Bundle:
+     * - original: full file (or WebP 92%)
+     * - feed: max 1080px WebP 82%
+     * - thumbnail: max 320px WebP 72%
+     * Uploads via POST /api/upload as multipart form data.
+     */
+    suspend fun uploadStoryImageBundle(
+        context: Context,
+        uri: Uri
+    ): StoryMediaBundleResult? = withContext(Dispatchers.IO) {
+        val (bitmap, dims) = decodeAndOrientBitmap(context, uri)
+        if (bitmap == null) return@withContext null
+
+        try {
+            val thumbBytes = compressBitmap(bitmap, 320, 72)
+            val feedBytes = compressBitmap(bitmap, 1080, 82)
+            val fullBytes = compressBitmap(bitmap, 1920, 92)
+
+            val boundary = "==FeatheredStoryImage-${UUID.randomUUID()}=="
+            val urlString = "$BASE_URL/api/upload"
+            val conn = (URL(urlString).openConnection() as HttpURLConnection).apply {
+                requestMethod = "POST"
+                doOutput = true
+                connectTimeout = 30000
+                readTimeout = 30000
+                setRequestProperty("Content-Type", "multipart/form-data; boundary=$boundary")
+                setRequestProperty("User-Agent", USER_AGENT)
+            }
+
+            val dos = DataOutputStream(conn.outputStream)
+
+            // Part 1: original
+            dos.writeBytes("--$boundary\r\n")
+            dos.writeBytes("Content-Disposition: form-data; name=\"original\"; filename=\"${System.currentTimeMillis()}-original.jpg\"\r\n")
+            dos.writeBytes("Content-Type: image/jpeg\r\n\r\n")
+            dos.write(fullBytes)
+            dos.writeBytes("\r\n")
+
+            // Part 2: feed
+            dos.writeBytes("--$boundary\r\n")
+            dos.writeBytes("Content-Disposition: form-data; name=\"feed\"; filename=\"${System.currentTimeMillis()}-feed.webp\"\r\n")
+            dos.writeBytes("Content-Type: image/webp\r\n\r\n")
+            dos.write(feedBytes)
+            dos.writeBytes("\r\n")
+
+            // Part 3: thumbnail
+            dos.writeBytes("--$boundary\r\n")
+            dos.writeBytes("Content-Disposition: form-data; name=\"thumbnail\"; filename=\"${System.currentTimeMillis()}-thumbnail.webp\"\r\n")
+            dos.writeBytes("Content-Type: image/webp\r\n\r\n")
+            dos.write(thumbBytes)
+            dos.writeBytes("\r\n")
+
+            dos.writeBytes("--$boundary--\r\n")
+            dos.flush()
+            dos.close()
+
+            if (conn.responseCode in 200..299) {
+                val text = BufferedReader(InputStreamReader(conn.inputStream)).use { it.readText() }.trim()
+                if (text.startsWith("{")) {
+                    val json = JSONObject(text)
+                    val uploaded = json.optJSONObject("uploaded")
+                    val mediaUrls = json.optJSONObject("media_urls")
+
+                    val thumbUrl = uploaded?.optJSONObject("thumbnail")?.optString("url")
+                        ?: mediaUrls?.optString("thumb")
+                        ?: ""
+                    val feedUrl = uploaded?.optJSONObject("feed")?.optString("url")
+                        ?: uploaded?.optJSONObject("original")?.optString("url")
+                        ?: mediaUrls?.optString("feed")
+                        ?: json.optString("url")
+                    val origUrl = uploaded?.optJSONObject("original")?.optString("url")
+                        ?: feedUrl
+
+                    val effectiveUrl = if (feedUrl.isNotBlank()) feedUrl else origUrl
+                    if (effectiveUrl.isNotBlank()) {
+                        val effectiveThumb = if (thumbUrl.isNotBlank()) thumbUrl else effectiveUrl
+                        val meta = mapOf(
+                            "thumb" to effectiveThumb,
+                            "feed" to effectiveUrl,
+                            "full" to effectiveUrl, // web: full = feed
+                            "type" to "image"
+                        )
+                        return@withContext StoryMediaBundleResult(
+                            mediaUrl = effectiveUrl,
+                            mediaUrls = listOf(effectiveUrl),
+                            mediaTypes = listOf("image"),
+                            mediaMeta = listOf(meta)
+                        )
+                    }
+                }
+            }
+            conn.disconnect()
+        } catch (e: Exception) {
+            e.printStackTrace()
+        } finally {
+            bitmap.recycle()
+        }
+        null
+    }
+
+    /**
+     * Exact Feathered Web Story Video Bundle:
+     * - Enforces max 90 seconds (1 min 30 sec) duration
+     * - thumbnail: extracted at 20% mark, max 320px WebP 72%
+     * - original: full video file
+     * Uploads via POST /api/upload as multipart form data.
+     */
+    suspend fun uploadStoryVideoBundle(
+        context: Context,
+        videoUri: Uri
+    ): StoryMediaBundleResult? = withContext(Dispatchers.IO) {
+        val retriever = MediaMetadataRetriever()
+        val thumbBytes: ByteArray
+        try {
+            retriever.setDataSource(context, videoUri)
+            val durationStr = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)
+            val durationMs = durationStr?.toLongOrNull() ?: 0L
+            val durationSec = durationMs / 1000.0
+
+            if (durationSec > 90.0) {
+                throw IllegalArgumentException("Story video must be 1 minute 30 seconds or less")
+            }
+
+            // Target seek at ~20% of duration
+            val seekUs = (durationMs * 0.2 * 1000).toLong().coerceIn(100_000L, maxOf(100_000L, (durationMs - 100) * 1000))
+            val frame = retriever.getFrameAtTime(seekUs, MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
+                ?: retriever.frameAtTime
+                ?: return@withContext null
+
+            val rotationStr = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_ROTATION)
+            val rotation = rotationStr?.toIntOrNull() ?: 0
+            val rotated = if (rotation != 0) {
+                val matrix = Matrix().apply { postRotate(rotation.toFloat()) }
+                Bitmap.createBitmap(frame, 0, 0, frame.width, frame.height, matrix, true).also {
+                    if (it != frame) frame.recycle()
+                }
+            } else {
+                frame
+            }
+
+            val maxBound = 320f
+            val scale = minOf(1f, maxBound / rotated.width.toFloat(), maxBound / rotated.height.toFloat())
+            val targetW = (rotated.width * scale).toInt().coerceAtLeast(1)
+            val targetH = (rotated.height * scale).toInt().coerceAtLeast(1)
+            val scaled = if (scale < 1f) {
+                Bitmap.createScaledBitmap(rotated, targetW, targetH, true).also {
+                    if (it != rotated) rotated.recycle()
+                }
+            } else {
+                rotated
+            }
+
+            val baos = ByteArrayOutputStream()
+            val format = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
+                Bitmap.CompressFormat.WEBP_LOSSY
+            } else {
+                Bitmap.CompressFormat.WEBP
+            }
+            val success = scaled.compress(format, 72, baos)
+            if (!success || baos.size() == 0) {
+                baos.reset()
+                scaled.compress(Bitmap.CompressFormat.JPEG, 75, baos)
+            }
+            scaled.recycle()
+            thumbBytes = baos.toByteArray()
+        } catch (e: IllegalArgumentException) {
+            throw e
+        } catch (e: Exception) {
+            e.printStackTrace()
+            return@withContext null
+        } finally {
+            try { retriever.release() } catch (_: Exception) {}
+        }
+
+        try {
+            val boundary = "==FeatheredStoryVideo-${UUID.randomUUID()}=="
+            val urlString = "$BASE_URL/api/upload"
+            val conn = (URL(urlString).openConnection() as HttpURLConnection).apply {
+                requestMethod = "POST"
+                doOutput = true
+                connectTimeout = 60000
+                readTimeout = 60000
+                setChunkedStreamingMode(64 * 1024)
+                setRequestProperty("Content-Type", "multipart/form-data; boundary=$boundary")
+                setRequestProperty("User-Agent", USER_AGENT)
+            }
+
+            val output = conn.outputStream
+
+            // Part 1: thumbnail
+            val thumbHeader = "--$boundary\r\n" +
+                "Content-Disposition: form-data; name=\"thumbnail\"; filename=\"${System.currentTimeMillis()}-thumbnail.webp\"\r\n" +
+                "Content-Type: image/webp\r\n\r\n"
+            output.write(thumbHeader.toByteArray(Charsets.UTF_8))
+            output.write(thumbBytes)
+            output.write("\r\n".toByteArray(Charsets.UTF_8))
+
+            // Part 2: original (stream video)
+            val videoHeader = "--$boundary\r\n" +
+                "Content-Disposition: form-data; name=\"original\"; filename=\"${System.currentTimeMillis()}-story.mp4\"\r\n" +
+                "Content-Type: video/mp4\r\n\r\n"
+            output.write(videoHeader.toByteArray(Charsets.UTF_8))
+
+            context.contentResolver.openInputStream(videoUri)?.use { input ->
+                val buffer = ByteArray(64 * 1024)
+                var bytesRead: Int
+                while (input.read(buffer).also { bytesRead = it } != -1) {
+                    output.write(buffer, 0, bytesRead)
+                }
+            }
+            output.write("\r\n".toByteArray(Charsets.UTF_8))
+
+            output.write("--$boundary--\r\n".toByteArray(Charsets.UTF_8))
+            output.flush()
+            output.close()
+
+            if (conn.responseCode in 200..299) {
+                val text = BufferedReader(InputStreamReader(conn.inputStream)).use { it.readText() }.trim()
+                if (text.startsWith("{")) {
+                    val json = JSONObject(text)
+                    val uploaded = json.optJSONObject("uploaded")
+                    val origUrl = uploaded?.optJSONObject("original")?.optString("url")
+                        ?: json.optString("url")
+                    val thumbUrl = uploaded?.optJSONObject("thumbnail")?.optString("url")
+
+                    if (origUrl.isNotBlank()) {
+                        val meta = mapOf(
+                            "thumb" to thumbUrl,
+                            "feed" to null,
+                            "full" to origUrl,
+                            "type" to "video"
+                        )
+                        return@withContext StoryMediaBundleResult(
+                            mediaUrl = origUrl,
+                            mediaUrls = listOf(origUrl),
+                            mediaTypes = listOf("video"),
+                            mediaMeta = listOf(meta)
+                        )
+                    }
+                }
+            }
+            conn.disconnect()
+        } catch (e: Exception) {
+            e.printStackTrace()
+            if (e is IllegalArgumentException) throw e
+        }
+        null
     }
 }

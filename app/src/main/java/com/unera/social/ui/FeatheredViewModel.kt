@@ -2340,13 +2340,18 @@ class FeatheredViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     fun createStory(
-        mediaUrl: String,
+        mediaUrl: String = "",
         type: String = "image",
         textContent: String = "",
+        mediaUrls: List<String> = emptyList(),
+        mediaTypes: List<String> = emptyList(),
+        mediaMeta: List<Map<String, Any?>> = emptyList(),
         backgroundStyle: String = "linear-gradient(45deg, #1877F2, #0055FF)",
         musicTitle: String? = null,
         musicUrl: String? = null,
-        duration: Int = 90
+        duration: Int = 90,
+        onSuccess: (() -> Unit)? = null,
+        onError: ((String) -> Unit)? = null
     ) {
         if (_uiState.value.isGuest || !_uiState.value.isLoggedIn) {
             openAuth("login")
@@ -2355,27 +2360,139 @@ class FeatheredViewModel(application: Application) : AndroidViewModel(applicatio
         val currentUserId = _uiState.value.currentUser.id
         viewModelScope.launch {
             _uiState.update { it.copy(isStoriesLoading = true, showCreateStoryDialog = false) }
-            val mediaUrls = if (mediaUrl.isNotBlank()) listOf(mediaUrl) else emptyList()
+            val finalMediaUrls = if (mediaUrls.isNotEmpty()) mediaUrls else if (mediaUrl.isNotBlank()) listOf(mediaUrl) else emptyList()
+            val finalMediaTypes = if (mediaTypes.isNotEmpty()) mediaTypes else if (mediaUrl.isNotBlank()) listOf(type) else emptyList()
+            val finalMediaMeta = if (mediaMeta.isNotEmpty()) mediaMeta else if (mediaUrl.isNotBlank()) {
+                listOf(mapOf(
+                    "thumb" to mediaUrl,
+                    "feed" to mediaUrl,
+                    "full" to mediaUrl,
+                    "type" to type
+                ))
+            } else emptyList()
+
             val created = StoriesApiService.createStory(
                 userId = currentUserId,
                 type = type,
                 textContent = textContent.takeIf { it.isNotBlank() },
                 mediaUrl = mediaUrl.takeIf { it.isNotBlank() },
-                mediaUrls = mediaUrls,
+                mediaUrls = finalMediaUrls,
+                mediaTypes = finalMediaTypes,
+                mediaMeta = finalMediaMeta,
                 backgroundStyle = backgroundStyle.takeIf { it.isNotBlank() },
                 musicUrl = musicUrl,
                 musicTitle = musicTitle,
                 duration = duration
             )
             if (created != null) {
+                val finalStory = if (created.author.id == currentUserId && created.author.name.isBlank()) {
+                    created.copy(author = _uiState.value.currentUser)
+                } else created
+
                 _uiState.update { state ->
                     state.copy(
-                        stories = listOf(created) + state.stories.filter { it.id != created.id },
+                        stories = listOf(finalStory) + state.stories.filter { it.id != finalStory.id },
                         isStoriesLoading = false
                     )
                 }
+                onSuccess?.invoke()
             } else {
                 refreshStories()
+                _uiState.update { it.copy(isStoriesLoading = false) }
+                onError?.invoke("Failed to post story. Please try again.")
+            }
+        }
+    }
+
+    /**
+     * Uploads media bundle (image or video) and calls createStory matching exact web implementation.
+     */
+    fun uploadStoryAndPost(
+        context: Context,
+        mediaUri: Uri?,
+        isVideo: Boolean,
+        type: String, // "text" or "media"
+        textContent: String,
+        backgroundStyle: String,
+        musicTitle: String?,
+        musicUrl: String? = null,
+        onSuccess: () -> Unit,
+        onError: (String) -> Unit
+    ) {
+        if (_uiState.value.isGuest || !_uiState.value.isLoggedIn) {
+            openAuth("login")
+            return
+        }
+
+        val hasText = textContent.trim().isNotEmpty()
+        val hasMedia = mediaUri != null
+
+        if (!hasText && !hasMedia) {
+            onError("Please add text or media to your story")
+            return
+        }
+
+        viewModelScope.launch {
+            _uiState.update { it.copy(isStoriesLoading = true) }
+            try {
+                if (type == "text" || (hasText && !hasMedia)) {
+                    createStory(
+                        type = "text",
+                        textContent = textContent.trim(),
+                        backgroundStyle = backgroundStyle,
+                        musicTitle = musicTitle,
+                        musicUrl = musicUrl,
+                        onSuccess = {
+                            _uiState.update { it.copy(showCreateStoryDialog = false, isStoriesLoading = false) }
+                            onSuccess()
+                        },
+                        onError = { err ->
+                            _uiState.update { it.copy(isStoriesLoading = false) }
+                            onError(err)
+                        }
+                    )
+                    return@launch
+                }
+
+                if (mediaUri != null) {
+                    val bundle = if (isVideo) {
+                        MediaUploadHelper.uploadStoryVideoBundle(context, mediaUri)
+                    } else {
+                        MediaUploadHelper.uploadStoryImageBundle(context, mediaUri)
+                    }
+
+                    if (bundle == null || bundle.mediaUrl.isBlank()) {
+                        _uiState.update { it.copy(isStoriesLoading = false) }
+                        onError("Failed to upload story media. Please check your connection and try again.")
+                        return@launch
+                    }
+
+                    createStory(
+                        mediaUrl = bundle.mediaUrl,
+                        type = if (isVideo) "video" else "image",
+                        textContent = textContent.trim(),
+                        mediaUrls = bundle.mediaUrls,
+                        mediaTypes = bundle.mediaTypes,
+                        mediaMeta = bundle.mediaMeta,
+                        backgroundStyle = backgroundStyle,
+                        musicTitle = musicTitle,
+                        musicUrl = musicUrl,
+                        onSuccess = {
+                            _uiState.update { it.copy(showCreateStoryDialog = false, isStoriesLoading = false) }
+                            onSuccess()
+                        },
+                        onError = { err ->
+                            _uiState.update { it.copy(isStoriesLoading = false) }
+                            onError(err)
+                        }
+                    )
+                }
+            } catch (e: IllegalArgumentException) {
+                _uiState.update { it.copy(isStoriesLoading = false) }
+                onError(e.message ?: "Invalid story media")
+            } catch (e: Exception) {
+                _uiState.update { it.copy(isStoriesLoading = false) }
+                onError(e.message ?: "Failed to upload story")
             }
         }
     }
