@@ -43,6 +43,7 @@ import coil.compose.AsyncImage
 import com.unera.social.data.PostsApiService
 import com.unera.social.model.*
 import com.unera.social.ui.components.InstagramVideoCard
+import com.unera.social.ui.components.GalleryViewerDialog
 import com.unera.social.ui.theme.*
 
 /**
@@ -103,6 +104,8 @@ fun ProfileScreen(
     var suspendDuration by remember { mutableStateOf("week") }
     var toastMessage by remember { mutableStateOf<String?>(null) }
     var lightboxImage by remember { mutableStateOf<String?>(null) }
+    var galleryState by remember { mutableStateOf<Pair<List<String>, Int>?>(null) }
+    var activePostForGallery by remember { mutableStateOf<Post?>(null) }
 
     val clipboardManager = LocalClipboardManager.current
 
@@ -910,6 +913,10 @@ fun ProfileScreen(
                                     onShare = {
                                         if (isGuest) onRequestAuth() else onSharePost(post.id)
                                     },
+                                    onOpenGallery = { imgs, idx ->
+                                        activePostForGallery = post
+                                        galleryState = Pair(imgs, idx)
+                                    },
                                     onOpenProduct = onOpenProduct,
                                     onDeletePost = onDeletePost,
                                     onEditPost = onEditPost,
@@ -1074,6 +1081,7 @@ fun ProfileScreen(
                                     verticalArrangement = Arrangement.spacedBy(4.dp)
                                 ) {
                                     items(userPhotos) { post ->
+                                        val mediaUrls = if (post.mediaUrls.isNotEmpty()) post.mediaUrls else listOfNotNull(post.mediaUrl)
                                         AsyncImage(
                                             model = post.mediaUrl,
                                             contentDescription = null,
@@ -1081,7 +1089,10 @@ fun ProfileScreen(
                                             modifier = Modifier
                                                 .aspectRatio(1f)
                                                 .clip(RoundedCornerShape(6.dp))
-                                                .clickable { lightboxImage = post.mediaUrl }
+                                                .clickable {
+                                                    activePostForGallery = post
+                                                    galleryState = Pair(mediaUrls, 0)
+                                                }
                                         )
                                     }
                                 }
@@ -1135,6 +1146,24 @@ fun ProfileScreen(
                     modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp)
                 )
             }
+        }
+
+        // Fullscreen Gallery Viewer for normal full post image view
+        galleryState?.let { (imgs, idx) ->
+            val galleryPost = activePostForGallery ?: Post(id = 0, author = user, content = "", timestamp = "")
+            GalleryViewerDialog(
+                images = imgs,
+                initialIndex = idx,
+                post = galleryPost,
+                onDismiss = {
+                    galleryState = null
+                    activePostForGallery = null
+                },
+                onLike = { onLikePost(galleryPost.id) },
+                onComment = { onCommentPost(galleryPost) },
+                onShare = { onSharePost(galleryPost.id) },
+                onSave = { onSavePost(galleryPost.id) }
+            )
         }
 
         // Fullscreen Lightbox Viewer

@@ -13,6 +13,7 @@ import com.unera.social.data.StoriesApiService
 import com.unera.social.data.UserApiService
 import com.unera.social.data.UserSessionManager
 import com.unera.social.data.VideosApiService
+import com.unera.social.data.FeedInteractionApiService
 import android.content.Context
 import android.net.Uri
 import com.unera.social.data.MediaUploadHelper
@@ -493,65 +494,7 @@ class FeatheredViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     fun toggleLikePost(postId: Long) {
-        if (_uiState.value.isGuest || !_uiState.value.isLoggedIn) {
-            openAuth("login")
-            return
-        }
-        val post = _uiState.value.posts.find { it.id == postId } ?: _uiState.value.videoPosts.find { it.id == postId }
-        var isNewLiked = false
-        _uiState.update { state ->
-            val updatedPosts = state.posts.map { p ->
-                if (p.id == postId) {
-                    val newLiked = !p.isLiked
-                    isNewLiked = newLiked
-                    val newCount = if (newLiked) p.likesCount + 1 else (p.likesCount - 1).coerceAtLeast(0)
-                    p.copy(isLiked = newLiked, likesCount = newCount, myReaction = if (newLiked) "like" else null)
-                } else p
-            }
-            val updatedVideoPosts = state.videoPosts.map { p ->
-                if (p.id == postId) {
-                    val newLiked = !p.isLiked
-                    isNewLiked = newLiked
-                    val newCount = if (newLiked) p.likesCount + 1 else (p.likesCount - 1).coerceAtLeast(0)
-                    p.copy(isLiked = newLiked, likesCount = newCount, myReaction = if (newLiked) "like" else null)
-                } else p
-            }
-            val isProd = post?.product != null || post?.postType == "product"
-            val pid = post?.product?.id ?: postId
-            val updatedProducts = if (isProd) {
-                state.products.map { prod ->
-                    if (prod.id == pid) {
-                        val newLiked = !prod.isLiked
-                        prod.copy(
-                            isLiked = newLiked,
-                            myReaction = if (newLiked) "like" else null,
-                            likesCount = if (newLiked) prod.likesCount + 1 else (prod.likesCount - 1).coerceAtLeast(0)
-                        )
-                    } else prod
-                }
-            } else state.products
-            state.copy(
-                posts = updatedPosts,
-                videoPosts = updatedVideoPosts,
-                products = updatedProducts,
-                selectedPostForComments = if (state.selectedPostForComments?.id == postId) {
-                    updatedPosts.find { it.id == postId } ?: updatedVideoPosts.find { it.id == postId }
-                } else state.selectedPostForComments
-            )
-        }
-
-        viewModelScope.launch {
-            val reactType = if (isNewLiked) "like" else "unlike"
-            VideosApiService.reactToPost(postId, _uiState.value.currentUser.id, reactType)
-        }
-
-        if (post != null && (post.product != null || post.postType == "product")) {
-            val pid = post.product?.id ?: postId
-            val action = if (post.isLiked) "unlike" else "like"
-            viewModelScope.launch {
-                MarketplaceApiService.reactToProduct(pid, _uiState.value.currentUser.id, action)
-            }
-        }
+        reactToPost(postId, "like")
     }
 
     fun reactToPost(postId: Long, reaction: String) {
@@ -560,14 +503,15 @@ class FeatheredViewModel(application: Application) : AndroidViewModel(applicatio
             return
         }
         val post = _uiState.value.posts.find { it.id == postId } ?: _uiState.value.videoPosts.find { it.id == postId }
-        var finalReactionToSend = reaction
+        if (post == null) return
+
+        val isSame = post.myReaction == reaction
+        val newReaction = if (isSame) null else reaction
+        val finalReactionToSend = newReaction ?: "unlike"
+
         _uiState.update { state ->
             val updatedPosts = state.posts.map { p ->
                 if (p.id == postId) {
-                    val isSame = p.myReaction == reaction
-                    val newReaction = if (isSame) null else reaction
-                    finalReactionToSend = newReaction ?: "unlike"
-                    val newLiked = newReaction != null
                     val prevHadReaction = p.myReaction != null
                     val newCount = when {
                         !prevHadReaction && newReaction != null -> p.likesCount + 1
@@ -579,7 +523,7 @@ class FeatheredViewModel(application: Application) : AndroidViewModel(applicatio
                         existingWithoutMe + UserReaction(state.currentUser.id, state.currentUser.name, state.currentUser.profileImageUrl, newReaction)
                     } else existingWithoutMe
                     p.copy(
-                        isLiked = newLiked,
+                        isLiked = newReaction != null,
                         myReaction = newReaction,
                         likesCount = newCount,
                         reactions = updatedReactions
@@ -588,10 +532,6 @@ class FeatheredViewModel(application: Application) : AndroidViewModel(applicatio
             }
             val updatedVideoPosts = state.videoPosts.map { p ->
                 if (p.id == postId) {
-                    val isSame = p.myReaction == reaction
-                    val newReaction = if (isSame) null else reaction
-                    finalReactionToSend = newReaction ?: "unlike"
-                    val newLiked = newReaction != null
                     val prevHadReaction = p.myReaction != null
                     val newCount = when {
                         !prevHadReaction && newReaction != null -> p.likesCount + 1
@@ -603,34 +543,16 @@ class FeatheredViewModel(application: Application) : AndroidViewModel(applicatio
                         existingWithoutMe + UserReaction(state.currentUser.id, state.currentUser.name, state.currentUser.profileImageUrl, newReaction)
                     } else existingWithoutMe
                     p.copy(
-                        isLiked = newLiked,
+                        isLiked = newReaction != null,
                         myReaction = newReaction,
                         likesCount = newCount,
                         reactions = updatedReactions
                     )
                 } else p
             }
-            val isProd = post?.product != null || post?.postType == "product"
-            val pid = post?.product?.id ?: postId
-            val updatedProducts = if (isProd) {
-                state.products.map { prod ->
-                    if (prod.id == pid) {
-                        val isSame = prod.myReaction == reaction
-                        val newReaction = if (isSame) null else reaction
-                        val prevHad = prod.myReaction != null
-                        val newCount = when {
-                            !prevHad && newReaction != null -> prod.likesCount + 1
-                            prevHad && newReaction == null -> (prod.likesCount - 1).coerceAtLeast(0)
-                            else -> prod.likesCount
-                        }
-                        prod.copy(isLiked = newReaction != null, myReaction = newReaction, likesCount = newCount)
-                    } else prod
-                }
-            } else state.products
             state.copy(
                 posts = updatedPosts,
                 videoPosts = updatedVideoPosts,
-                products = updatedProducts,
                 selectedPostForComments = if (state.selectedPostForComments?.id == postId) {
                     updatedPosts.find { it.id == postId } ?: updatedVideoPosts.find { it.id == postId }
                 } else state.selectedPostForComments
@@ -638,15 +560,44 @@ class FeatheredViewModel(application: Application) : AndroidViewModel(applicatio
         }
 
         viewModelScope.launch {
-            VideosApiService.reactToPost(postId, _uiState.value.currentUser.id, finalReactionToSend)
-        }
-
-        if (post != null && (post.product != null || post.postType == "product")) {
-            val pid = post.product?.id ?: postId
-            val isSame = post.myReaction == reaction
-            val action = if (isSame) "unlike" else reaction
-            viewModelScope.launch {
-                MarketplaceApiService.reactToProduct(pid, _uiState.value.currentUser.id, action)
+            val liveResult = FeedInteractionApiService.reactToFeedItem(
+                post = post,
+                userId = _uiState.value.currentUser.id,
+                reactionType = finalReactionToSend
+            )
+            _uiState.update { state ->
+                val finalMyReaction = liveResult.myReaction
+                val finalCount = liveResult.reactionsCount
+                val finalLiked = finalMyReaction != null
+                val updatedPosts = state.posts.map { p ->
+                    if (p.id == postId) {
+                        p.copy(
+                            isLiked = finalLiked,
+                            myReaction = finalMyReaction,
+                            likesCount = finalCount,
+                            sharesCount = liveResult.sharesCount ?: p.sharesCount,
+                            commentsCount = liveResult.commentsCount ?: p.commentsCount
+                        )
+                    } else p
+                }
+                val updatedVideoPosts = state.videoPosts.map { p ->
+                    if (p.id == postId) {
+                        p.copy(
+                            isLiked = finalLiked,
+                            myReaction = finalMyReaction,
+                            likesCount = finalCount,
+                            sharesCount = liveResult.sharesCount ?: p.sharesCount,
+                            commentsCount = liveResult.commentsCount ?: p.commentsCount
+                        )
+                    } else p
+                }
+                state.copy(
+                    posts = updatedPosts,
+                    videoPosts = updatedVideoPosts,
+                    selectedPostForComments = if (state.selectedPostForComments?.id == postId) {
+                        updatedPosts.find { it.id == postId } ?: updatedVideoPosts.find { it.id == postId }
+                    } else state.selectedPostForComments
+                )
             }
         }
     }
@@ -838,73 +789,66 @@ class FeatheredViewModel(application: Application) : AndroidViewModel(applicatio
             )
         }
 
-        if (post != null && (post.product != null || post.postType == "product")) {
-            val pid = post.product?.id ?: postId
-            viewModelScope.launch {
-                MarketplaceApiService.addReview(
-                    productId = pid,
-                    userId = _uiState.value.currentUser.id,
-                    text = commentText.trim()
-                )
-            }
-        } else {
-            viewModelScope.launch {
-                val created = VideosApiService.postComment(
-                    postId = postId,
-                    userId = _uiState.value.currentUser.id,
-                    text = commentText.trim()
-                )
-                if (created != null) {
-                    _uiState.update { state ->
-                        val updatedPosts = state.posts.map { p ->
-                            if (p.id == postId) {
-                                p.copy(
-                                    comments = listOf(created) + p.comments.filter { it.id != newComment.id }
-                                )
-                            } else p
-                        }
-                        val updatedVideoPosts = state.videoPosts.map { p ->
-                            if (p.id == postId) {
-                                p.copy(
-                                    comments = listOf(created) + p.comments.filter { it.id != newComment.id }
-                                )
-                            } else p
-                        }
-                        val updatedSel = if (state.selectedPostForComments?.id == postId) {
-                            state.selectedPostForComments?.copy(
-                                comments = listOf(created) + (state.selectedPostForComments?.comments?.filter { it.id != newComment.id } ?: emptyList())
+        val targetPost = post ?: Post(id = postId, author = _uiState.value.currentUser, content = "", timestamp = "")
+        viewModelScope.launch {
+            val liveComment = FeedInteractionApiService.addComment(
+                post = targetPost,
+                userId = _uiState.value.currentUser.id,
+                text = commentText.trim()
+            )
+            if (liveComment != null) {
+                _uiState.update { state ->
+                    val updatedPosts = state.posts.map { p ->
+                        if (p.id == postId) {
+                            p.copy(
+                                comments = listOf(liveComment) + p.comments.filter { it.id != newComment.id }
                             )
-                        } else state.selectedPostForComments
-                        state.copy(
-                            posts = updatedPosts,
-                            videoPosts = updatedVideoPosts,
-                            selectedPostForComments = updatedSel
-                        )
+                        } else p
                     }
+                    val updatedVideoPosts = state.videoPosts.map { p ->
+                        if (p.id == postId) {
+                            p.copy(
+                                comments = listOf(liveComment) + p.comments.filter { it.id != newComment.id }
+                            )
+                        } else p
+                    }
+                    val updatedSel = if (state.selectedPostForComments?.id == postId) {
+                        state.selectedPostForComments?.copy(
+                            comments = listOf(liveComment) + (state.selectedPostForComments?.comments?.filter { it.id != newComment.id } ?: emptyList())
+                        )
+                    } else state.selectedPostForComments
+                    state.copy(
+                        posts = updatedPosts,
+                        videoPosts = updatedVideoPosts,
+                        selectedPostForComments = updatedSel
+                    )
                 }
             }
         }
     }
 
     fun deleteComment(postId: Long, commentId: Long) {
+        val post = _uiState.value.posts.find { it.id == postId }
+            ?: _uiState.value.videoPosts.find { it.id == postId }
+            ?: _uiState.value.selectedPostForComments
         _uiState.update { state ->
-            val updatedPosts = state.posts.map { post ->
-                if (post.id == postId) {
-                    val remaining = post.comments.filter { it.id != commentId }
-                    post.copy(
+            val updatedPosts = state.posts.map { p ->
+                if (p.id == postId) {
+                    val remaining = p.comments.filter { it.id != commentId }
+                    p.copy(
                         comments = remaining,
-                        commentsCount = (post.commentsCount - 1).coerceAtLeast(0)
+                        commentsCount = (p.commentsCount - 1).coerceAtLeast(0)
                     )
-                } else post
+                } else p
             }
-            val updatedVideoPosts = state.videoPosts.map { post ->
-                if (post.id == postId) {
-                    val remaining = post.comments.filter { it.id != commentId }
-                    post.copy(
+            val updatedVideoPosts = state.videoPosts.map { p ->
+                if (p.id == postId) {
+                    val remaining = p.comments.filter { it.id != commentId }
+                    p.copy(
                         comments = remaining,
-                        commentsCount = (post.commentsCount - 1).coerceAtLeast(0)
+                        commentsCount = (p.commentsCount - 1).coerceAtLeast(0)
                     )
-                } else post
+                } else p
             }
             state.copy(
                 posts = updatedPosts,
@@ -912,14 +856,56 @@ class FeatheredViewModel(application: Application) : AndroidViewModel(applicatio
                 selectedPostForComments = updatedPosts.find { it.id == postId } ?: updatedVideoPosts.find { it.id == postId }
             )
         }
+        val targetPost = post ?: Post(id = postId, author = _uiState.value.currentUser, content = "", timestamp = "")
         viewModelScope.launch {
-            VideosApiService.deleteComment(commentId, _uiState.value.currentUser.id)
+            FeedInteractionApiService.deleteComment(
+                itemType = targetPost.postType,
+                commentId = commentId,
+                userId = _uiState.value.currentUser.id,
+                parentId = targetPost.id
+            )
         }
     }
 
     fun likeComment(commentId: Long) {
+        likeComment(0L, commentId)
+    }
+
+    fun likeComment(postId: Long, commentId: Long) {
+        val post = _uiState.value.posts.find { it.id == postId }
+            ?: _uiState.value.videoPosts.find { it.id == postId }
+            ?: _uiState.value.selectedPostForComments
+        _uiState.update { state ->
+            fun updateCommentList(comments: List<Comment>): List<Comment> {
+                return comments.map { c ->
+                    if (c.id == commentId) {
+                        val newLiked = !c.isLiked
+                        val newCount = if (newLiked) c.likesCount + 1 else (c.likesCount - 1).coerceAtLeast(0)
+                        c.copy(isLiked = newLiked, likesCount = newCount)
+                    } else c
+                }
+            }
+            val updatedPosts = state.posts.map { p ->
+                if (postId <= 0L || p.id == postId) p.copy(comments = updateCommentList(p.comments)) else p
+            }
+            val updatedVideoPosts = state.videoPosts.map { p ->
+                if (postId <= 0L || p.id == postId) p.copy(comments = updateCommentList(p.comments)) else p
+            }
+            state.copy(
+                posts = updatedPosts,
+                videoPosts = updatedVideoPosts,
+                selectedPostForComments = state.selectedPostForComments?.let {
+                    if (postId <= 0L || it.id == postId) it.copy(comments = updateCommentList(it.comments)) else it
+                }
+            )
+        }
+        val targetPost = post ?: Post(id = postId, author = _uiState.value.currentUser, content = "", timestamp = "")
         viewModelScope.launch {
-            VideosApiService.likeComment(commentId, _uiState.value.currentUser.id)
+            FeedInteractionApiService.likeComment(
+                itemType = targetPost.postType,
+                commentId = commentId,
+                userId = _uiState.value.currentUser.id
+            )
         }
     }
 
@@ -1280,12 +1266,14 @@ class FeatheredViewModel(application: Application) : AndroidViewModel(applicatio
         _uiState.update { it.copy(postUploadState = null) }
     }
 
-    fun sharePost(postId: Long, destination: String = "feed") {
+    fun sharePost(postId: Long, destination: String = "feed", message: String = "") {
         if (_uiState.value.isGuest || !_uiState.value.isLoggedIn) {
             openAuth("login")
             return
         }
         val post = _uiState.value.posts.find { it.id == postId } ?: _uiState.value.videoPosts.find { it.id == postId }
+        if (post == null) return
+
         _uiState.update { state ->
             val updatedPosts = state.posts.map { p ->
                 if (p.id == postId) {
@@ -1297,8 +1285,8 @@ class FeatheredViewModel(application: Application) : AndroidViewModel(applicatio
                     p.copy(sharesCount = p.sharesCount + 1)
                 } else p
             }
-            val isProd = post?.product != null || post?.postType == "product"
-            val pid = post?.product?.id ?: postId
+            val isProd = post.product != null || post.postType == "product"
+            val pid = post.product?.id ?: postId
             val updatedProducts = if (isProd) {
                 state.products.map { prod ->
                     if (prod.id == pid) prod.copy(sharesCount = prod.sharesCount + 1) else prod
@@ -1307,22 +1295,26 @@ class FeatheredViewModel(application: Application) : AndroidViewModel(applicatio
             state.copy(posts = updatedPosts, videoPosts = updatedVideoPosts, products = updatedProducts)
         }
 
-        if (post != null && (post.product != null || post.postType == "product")) {
-            val pid = post.product?.id ?: postId
-            viewModelScope.launch {
-                MarketplaceApiService.shareProduct(
-                    productId = pid,
-                    userId = _uiState.value.currentUser.id,
-                    destination = destination
-                )
-            }
-        } else {
-            viewModelScope.launch {
-                VideosApiService.sharePost(
-                    postId = postId,
-                    userId = _uiState.value.currentUser.id,
-                    destination = destination
-                )
+        viewModelScope.launch {
+            val liveShare = FeedInteractionApiService.shareItem(
+                post = post,
+                userId = _uiState.value.currentUser.id,
+                destination = destination,
+                message = message
+            )
+            _uiState.update { state ->
+                val finalSharesCount = liveShare.sharesCount ?: (post.sharesCount + 1)
+                val updatedPosts = state.posts.map { p ->
+                    if (p.id == postId) p.copy(sharesCount = finalSharesCount) else p
+                }
+                val updatedVideoPosts = state.videoPosts.map { p ->
+                    if (p.id == postId) p.copy(sharesCount = finalSharesCount) else p
+                }
+                val withSharedPost = if (liveShare.newPost != null && destination == "feed") {
+                    val shared = enrichPostsWithAuthors(listOf(liveShare.newPost), state.users).firstOrNull() ?: liveShare.newPost
+                    listOf(shared) + updatedPosts.filter { it.id != shared.id }
+                } else updatedPosts
+                state.copy(posts = withSharedPost, videoPosts = updatedVideoPosts)
             }
         }
     }

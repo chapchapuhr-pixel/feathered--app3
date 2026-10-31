@@ -4,6 +4,7 @@ import android.content.Intent
 import android.net.Uri
 import android.widget.Toast
 import androidx.compose.ui.platform.LocalContext
+import coil.compose.AsyncImage
 import androidx.compose.animation.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -33,11 +34,12 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
-import coil.compose.AsyncImage
+import com.unera.social.data.FeedInteractionApiService
 import com.unera.social.model.Comment
 import com.unera.social.model.Post
 import com.unera.social.model.User
 import com.unera.social.model.UserReaction
+import kotlinx.coroutines.launch
 
 // Reaction Emojis
 val REACTION_EMOJIS = listOf(
@@ -481,6 +483,14 @@ fun ShareBottomSheetDialog(
                                 .clip(RoundedCornerShape(8.dp))
                         )
                         Spacer(modifier = Modifier.width(10.dp))
+                    } else {
+                        FeatheredAvatar(
+                            name = post.author.name,
+                            imageUrl = post.author.profileImageUrl,
+                            size = 44.dp,
+                            username = post.author.username
+                        )
+                        Spacer(modifier = Modifier.width(10.dp))
                     }
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
@@ -647,7 +657,28 @@ fun DiscussionsSheetDialog(
     var showEmojiPicker by remember { mutableStateOf(false) }
     var selectedCommentForActions by remember { mutableStateOf<Comment?>(null) }
 
+    var liveComments by remember(post.id) { mutableStateOf(post.comments) }
+    var isLoadingComments by remember(post.id) { mutableStateOf(post.comments.isEmpty()) }
+
+    LaunchedEffect(post.id) {
+        val fetched = FeedInteractionApiService.fetchComments(post, currentUser.id)
+        if (fetched.isNotEmpty() || post.comments.isEmpty()) {
+            liveComments = fetched
+        }
+        isLoadingComments = false
+    }
+
+    LaunchedEffect(post.comments) {
+        if (post.comments.isNotEmpty()) {
+            val missing = post.comments.filter { pc -> liveComments.none { lc -> lc.id == pc.id } }
+            if (missing.isNotEmpty()) {
+                liveComments = missing + liveComments
+            }
+        }
+    }
+
     val quickEmojis = listOf("❤️", "🔥", "😂", "👏", "🙌", "😍", "✨", "💯", "🎉")
+    val totalDiscussions = if (liveComments.isNotEmpty()) liveComments.size else post.commentsCount
 
     Dialog(
         onDismissRequest = onDismiss,
@@ -688,7 +719,7 @@ fun DiscussionsSheetDialog(
                     }
 
                     Text(
-                        text = "${post.commentsCount} discussions",
+                        text = "$totalDiscussions discussions",
                         color = Color(0xFFCBD5E1),
                         fontSize = 14.sp,
                         fontWeight = FontWeight.SemiBold
@@ -719,13 +750,11 @@ fun DiscussionsSheetDialog(
                                     verticalAlignment = Alignment.CenterVertically,
                                     modifier = Modifier.clickable { onProfileClick?.invoke(post.author) }
                                 ) {
-                                    AsyncImage(
-                                        model = post.author.profileImageUrl,
-                                        contentDescription = post.author.name,
-                                        contentScale = ContentScale.Crop,
-                                        modifier = Modifier
-                                            .size(38.dp)
-                                            .clip(CircleShape)
+                                    FeatheredAvatar(
+                                        name = post.author.name,
+                                        imageUrl = post.author.profileImageUrl,
+                                        size = 38.dp,
+                                        username = post.author.username
                                     )
                                     Spacer(modifier = Modifier.width(10.dp))
                                     Column {
@@ -758,7 +787,22 @@ fun DiscussionsSheetDialog(
                     }
 
                     // Comments list
-                    if (post.comments.isEmpty()) {
+                    if (isLoadingComments && liveComments.isEmpty()) {
+                        item {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 40.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                CircularProgressIndicator(
+                                    color = Color(0xFF1877F2),
+                                    modifier = Modifier.size(32.dp),
+                                    strokeWidth = 3.dp
+                                )
+                            }
+                        }
+                    } else if (liveComments.isEmpty()) {
                         item {
                             Box(
                                 modifier = Modifier
@@ -782,10 +826,19 @@ fun DiscussionsSheetDialog(
                             }
                         }
                     } else {
-                        items(post.comments, key = { it.id }) { comment ->
+                        items(liveComments, key = { it.id }) { comment ->
                             CommentItemRow(
                                 comment = comment,
-                                onLike = { onLikeComment(comment.id) },
+                                onLike = {
+                                    liveComments = liveComments.map { c ->
+                                        if (c.id == comment.id) {
+                                            val newLiked = !c.isLiked
+                                            val newCount = if (newLiked) c.likesCount + 1 else (c.likesCount - 1).coerceAtLeast(0)
+                                            c.copy(isLiked = newLiked, likesCount = newCount)
+                                        } else c
+                                    }
+                                    onLikeComment(comment.id)
+                                },
                                 onReply = { replyingTo = comment.author.name },
                                 onMoreOptions = { selectedCommentForActions = comment },
                                 onUserClick = { onProfileClick?.invoke(comment.author) }
@@ -920,6 +973,7 @@ fun DiscussionsSheetDialog(
                 currentUserId = currentUser.id,
                 isAdmin = currentUser.role in listOf("admin", "moderator"),
                 onDelete = { commentId ->
+                    liveComments = liveComments.filter { it.id != commentId }
                     onDeleteComment?.invoke(commentId)
                 },
                 onReply = { comment ->
@@ -939,14 +993,12 @@ private fun CommentItemRow(
     onUserClick: (() -> Unit)? = null
 ) {
     Row(modifier = Modifier.fillMaxWidth()) {
-        AsyncImage(
-            model = comment.author.profileImageUrl,
-            contentDescription = comment.author.name,
-            contentScale = ContentScale.Crop,
-            modifier = Modifier
-                .size(36.dp)
-                .clip(CircleShape)
-                .clickable { onUserClick?.invoke() }
+        FeatheredAvatar(
+            name = comment.author.name,
+            imageUrl = comment.author.profileImageUrl,
+            size = 36.dp,
+            username = comment.author.username,
+            onClick = onUserClick
         )
 
         Spacer(modifier = Modifier.width(10.dp))

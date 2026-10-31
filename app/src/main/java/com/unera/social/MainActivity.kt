@@ -289,6 +289,8 @@ fun FeatheredApp(
                         onLikePost = { viewModel.toggleLikePost(it) },
                         onCommentPost = { viewModel.setSelectedPostForComments(it) },
                         onAddComment = { postId, text -> viewModel.addComment(postId, text) },
+                        onLikeComment = { postId, commentId -> viewModel.likeComment(postId, commentId) },
+                        onDeleteComment = { postId, commentId -> viewModel.deleteComment(postId, commentId) },
                         onSavePost = { viewModel.toggleSavePost(it) },
                         onUserClick = { viewModel.openUserProfile(it) },
                         onAddStoryClick = { viewModel.setShowCreateStoryDialog(true) },

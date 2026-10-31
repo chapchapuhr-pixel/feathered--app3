@@ -5,7 +5,9 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
@@ -23,7 +25,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -31,11 +35,108 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.viewinterop.AndroidView
+import androidx.media3.common.MediaItem
+import androidx.media3.common.Player
+import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.ui.AspectRatioFrameLayout
+import androidx.media3.ui.PlayerView
 import coil.compose.AsyncImage
 import com.unera.social.data.MockData
 import com.unera.social.data.PostsApiService
 import com.unera.social.model.*
 import com.unera.social.ui.components.*
+import java.util.Locale
+
+internal fun formatCount(count: Int): String {
+    if (count <= 0) return "0"
+    if (count >= 1_000_000) {
+        val formatted = "%.1f".format(Locale.US, count / 1_000_000.0)
+        return if (formatted.endsWith(".0")) "${formatted.substringBefore(".0")}M" else "${formatted}M"
+    }
+    if (count >= 1_000) {
+        val formatted = "%.1f".format(Locale.US, count / 1_000.0)
+        return if (formatted.endsWith(".0")) "${formatted.substringBefore(".0")}k" else "${formatted}k"
+    }
+    return count.toString()
+}
+
+@Composable
+fun InlinePostVideoPlayer(
+    videoUrl: String,
+    posterUrl: String?,
+    modifier: Modifier = Modifier
+) {
+    val context = LocalContext.current
+    var isPlaying by remember { mutableStateOf(false) }
+
+    val exoPlayer = remember(videoUrl) {
+        ExoPlayer.Builder(context).build().apply {
+            repeatMode = Player.REPEAT_MODE_ALL
+            val mediaItem = MediaItem.fromUri(videoUrl)
+            setMediaItem(mediaItem)
+            prepare()
+        }
+    }
+
+    DisposableEffect(exoPlayer) {
+        onDispose {
+            exoPlayer.release()
+        }
+    }
+
+    LaunchedEffect(isPlaying) {
+        exoPlayer.playWhenReady = isPlaying
+    }
+
+    Box(
+        modifier = modifier
+            .fillMaxWidth()
+            .heightIn(min = 240.dp, max = 460.dp)
+            .background(Color.Black)
+            .clickable { isPlaying = !isPlaying },
+        contentAlignment = Alignment.Center
+    ) {
+        if (!posterUrl.isNullOrBlank()) {
+            AsyncImage(
+                model = posterUrl,
+                contentDescription = "Video Poster",
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize()
+            )
+        }
+
+        if (isPlaying) {
+            AndroidView(
+                factory = { ctx ->
+                    PlayerView(ctx).apply {
+                        useController = false
+                        resizeMode = AspectRatioFrameLayout.RESIZE_MODE_ZOOM
+                        this.player = exoPlayer
+                    }
+                },
+                modifier = Modifier.fillMaxSize()
+            )
+        }
+
+        if (!isPlaying) {
+            Box(
+                modifier = Modifier
+                    .size(56.dp)
+                    .clip(CircleShape)
+                    .background(Color.Black.copy(alpha = 0.65f)),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = Icons.Default.PlayArrow,
+                    contentDescription = "Play Video",
+                    tint = Color.White,
+                    modifier = Modifier.size(34.dp)
+                )
+            }
+        }
+    }
+}
 
 
 @Composable
@@ -52,6 +153,8 @@ fun FeedScreen(
     onLikePost: (Long) -> Unit,
     onCommentPost: (Post) -> Unit,
     onAddComment: ((Long, String) -> Unit)? = null,
+    onLikeComment: ((Long, Long) -> Unit)? = null,
+    onDeleteComment: ((Long, Long) -> Unit)? = null,
     onSavePost: (Long) -> Unit,
     onUserClick: (User) -> Unit,
     onAddStoryClick: () -> Unit = onOpenCreatePost,
@@ -234,7 +337,7 @@ fun FeedScreen(
                         onShareClick = {
                             if (isGuest) onRequestAuth() else shareSheetPost = post
                         },
-                        onVideoClick = { onOpenVideos?.invoke() },
+                        onVideoClick = null,
                         onDelete = { onDeletePost?.invoke(it) },
                         onEdit = { id, text -> onEditPost?.invoke(id, text) }
                     )
@@ -473,7 +576,17 @@ fun FeedScreen(
                         onAddComment?.invoke(livePost.id, commentText)
                     }
                 },
-                onLikeComment = { /* Liked */ },
+                onLikeComment = { commentId ->
+                    if (isGuest) {
+                        discussionsSheetPost = null
+                        onRequestAuth()
+                    } else {
+                        onLikeComment?.invoke(livePost.id, commentId)
+                    }
+                },
+                onDeleteComment = { commentId ->
+                    onDeleteComment?.invoke(livePost.id, commentId)
+                },
                 onProfileClick = { author ->
                     discussionsSheetPost = null
                     onUserClick(author)
@@ -1267,37 +1380,10 @@ fun WebPostCard(
                 if (isPostVideo) {
                     val videoUrl = post.videoUrl ?: mediaList.firstOrNull() ?: ""
                     Spacer(modifier = Modifier.height(6.dp))
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .heightIn(min = 240.dp, max = 460.dp)
-                            .background(Color.Black)
-                            .clickable { onOpenGallery(listOf(videoUrl), 0) },
-                        contentAlignment = Alignment.Center
-                    ) {
-                        if (!post.mediaUrl.isNullOrBlank() && !post.mediaUrl.endsWith(".mp4", true) && !post.mediaUrl.endsWith(".webm", true)) {
-                            AsyncImage(
-                                model = post.mediaUrl,
-                                contentDescription = "Video Thumbnail",
-                                contentScale = ContentScale.Crop,
-                                modifier = Modifier.fillMaxSize()
-                            )
-                        }
-                        Box(
-                            modifier = Modifier
-                                .size(56.dp)
-                                .clip(CircleShape)
-                                .background(Color.Black.copy(alpha = 0.65f)),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.PlayArrow,
-                                contentDescription = "Play Video",
-                                tint = Color.White,
-                                modifier = Modifier.size(34.dp)
-                            )
-                        }
-                    }
+                    InlinePostVideoPlayer(
+                        videoUrl = videoUrl,
+                        posterUrl = post.mediaUrl
+                    )
                 } else if (mediaList.isNotEmpty()) {
                     Spacer(modifier = Modifier.height(6.dp))
                     MediaGrid(
@@ -1380,8 +1466,12 @@ fun WebPostCard(
 
             HorizontalDivider(color = Color(0xFF1E293B), thickness = 1.dp)
 
-            // Reaction Dock (on long press / dock active)
-            AnimatedVisibility(visible = showReactionDock) {
+            // Reaction Dock (pops up on hold / long press)
+            AnimatedVisibility(
+                visible = showReactionDock,
+                enter = fadeIn() + expandVertically(),
+                exit = fadeOut() + shrinkVertically()
+            ) {
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -1390,12 +1480,13 @@ fun WebPostCard(
                         .background(Color(0xFF0B1120))
                         .border(1.dp, Color(0xFF334155), RoundedCornerShape(24.dp))
                         .padding(horizontal = 10.dp, vertical = 6.dp),
-                    horizontalArrangement = Arrangement.SpaceAround
+                    horizontalArrangement = Arrangement.SpaceAround,
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    REACTION_EMOJIS.forEach { (type, emoji) ->
+                    REACTION_EMOJIS.take(7).forEach { (type, emoji) ->
                         Text(
                             text = emoji,
-                            fontSize = 24.sp,
+                            fontSize = 26.sp,
                             modifier = Modifier
                                 .clip(CircleShape)
                                 .clickable {
@@ -1408,81 +1499,115 @@ fun WebPostCard(
                 }
             }
 
-            // Action Buttons Row: React, Discuss, Share, Save
+            // Action Buttons Row: React, Discuss, Share, Save (Matching Web: px-3.5 py-2.5 border-t border-[#1E293B])
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 8.dp, vertical = 4.dp),
+                    .padding(horizontal = 14.dp, vertical = 10.dp),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    // React Button
-                    TextButton(
-                        onClick = {
-                            if (showReactionDock) showReactionDock = false
-                            else onLike()
-                        },
-                        modifier = Modifier.testTag("like_post_btn_${post.id}")
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(16.dp)
+                ) {
+                    // React Button: Tap = like / unlike; Hold / Long-press = show reaction emojis
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(8.dp))
+                            .pointerInput(post.id, showReactionDock) {
+                                detectTapGestures(
+                                    onLongPress = {
+                                        showReactionDock = true
+                                    },
+                                    onTap = {
+                                        if (showReactionDock) {
+                                            showReactionDock = false
+                                        } else {
+                                            onLike()
+                                        }
+                                    }
+                                )
+                            }
+                            .padding(horizontal = 4.dp, vertical = 4.dp)
+                            .testTag("like_post_btn_${post.id}")
                     ) {
-                        val reactionEmoji = post.myReaction?.let { getReactionEmoji(it) }
-                        if (reactionEmoji != null) {
-                            Text(text = reactionEmoji, fontSize = 18.sp)
-                        } else {
-                            Icon(
-                                imageVector = if (post.isLiked) Icons.Filled.Favorite else Icons.Outlined.FavoriteBorder,
-                                contentDescription = "Like",
-                                tint = if (post.isLiked) Color(0xFFF43F5E) else Color(0xFFCBD5E1),
-                                modifier = Modifier.size(20.dp)
-                            )
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            val reactionEmoji = post.myReaction?.let { getReactionEmoji(it) }
+                            if (reactionEmoji != null) {
+                                Text(text = reactionEmoji, fontSize = 20.sp)
+                            } else {
+                                Icon(
+                                    imageVector = if (post.isLiked) Icons.Filled.Favorite else Icons.Outlined.FavoriteBorder,
+                                    contentDescription = "Like",
+                                    tint = if (post.isLiked) Color(0xFFF43F5E) else Color(0xFFF8FAFC),
+                                    modifier = Modifier.size(22.dp)
+                                )
+                            }
+                            if (post.likesCount > 0) {
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(
+                                    text = formatCount(post.likesCount),
+                                    color = if (post.isLiked || post.myReaction != null) Color(0xFFF43F5E) else Color(0xFFF8FAFC),
+                                    fontSize = 14.sp,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                            }
                         }
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text(
-                            text = post.myReaction?.replaceFirstChar { it.uppercase() } ?: if (post.isLiked) "Liked" else "React",
-                            color = if (post.isLiked || post.myReaction != null) Color(0xFFF43F5E) else Color(0xFFCBD5E1),
-                            fontSize = 13.sp,
-                            fontWeight = FontWeight.SemiBold
-                        )
                     }
 
-                    // Discuss Button
-                    TextButton(
-                        onClick = onComment,
-                        modifier = Modifier.testTag("comment_post_btn_${post.id}")
+                    // Discuss Button (Matching Web: far fa-comment 22px #F8FAFC)
+                    Row(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(8.dp))
+                            .clickable(onClick = onComment)
+                            .padding(horizontal = 4.dp, vertical = 4.dp)
+                            .testTag("comment_post_btn_${post.id}"),
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
                         Icon(
                             imageVector = Icons.Outlined.ChatBubbleOutline,
                             contentDescription = "Discuss",
-                            tint = Color(0xFFCBD5E1),
-                            modifier = Modifier.size(20.dp)
+                            tint = Color(0xFFF8FAFC),
+                            modifier = Modifier.size(22.dp)
                         )
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text(
-                            text = "Discuss",
-                            color = Color(0xFFCBD5E1),
-                            fontSize = 13.sp,
-                            fontWeight = FontWeight.SemiBold
-                        )
+                        if (post.commentsCount > 0) {
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                text = formatCount(post.commentsCount),
+                                color = Color(0xFFF8FAFC),
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        }
                     }
 
-                    // Share Button
-                    TextButton(
-                        onClick = onShare,
-                        modifier = Modifier.testTag("share_post_btn_${post.id}")
+                    // Share Button (Facing Northeast: ↗, Send icon rotated -35deg)
+                    Row(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(8.dp))
+                            .clickable(onClick = onShare)
+                            .padding(horizontal = 4.dp, vertical = 4.dp)
+                            .testTag("share_post_btn_${post.id}"),
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
                         Icon(
-                            imageVector = Icons.AutoMirrored.Filled.Send,
+                            imageVector = Icons.Default.Send,
                             contentDescription = "Share",
-                            tint = Color(0xFFCBD5E1),
-                            modifier = Modifier.size(19.dp)
+                            tint = Color(0xFFF8FAFC),
+                            modifier = Modifier
+                                .size(20.dp)
+                                .graphicsLayer(rotationZ = -35f)
                         )
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text(
-                            text = "Share",
-                            color = Color(0xFFCBD5E1),
-                            fontSize = 13.sp,
-                            fontWeight = FontWeight.SemiBold
-                        )
+                        if (post.sharesCount > 0) {
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                text = formatCount(post.sharesCount),
+                                color = Color(0xFFF8FAFC),
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        }
                     }
                 }
 

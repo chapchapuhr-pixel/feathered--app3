@@ -39,6 +39,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
@@ -87,6 +88,19 @@ import kotlinx.coroutines.launch
  * - Video Discussion modal with comment actions (like, reply, hide, delete), quick emoji bar, reply banner, and submission form
  * - Full ReactionsSheetDialog & ShareBottomSheetDialog integrations
  */
+private fun formatCount(count: Int): String {
+    if (count <= 0) return "0"
+    if (count >= 1_000_000) {
+        val formatted = "%.1f".format(java.util.Locale.US, count / 1_000_000.0)
+        return if (formatted.endsWith(".0")) "${formatted.substringBefore(".0")}M" else "${formatted}M"
+    }
+    if (count >= 1_000) {
+        val formatted = "%.1f".format(java.util.Locale.US, count / 1_000.0)
+        return if (formatted.endsWith(".0")) "${formatted.substringBefore(".0")}k" else "${formatted}k"
+    }
+    return count.toString()
+}
+
 object ActiveVideoPlaybackManager {
     var currentlyPlayingPostId by mutableStateOf<Long?>(null)
 
@@ -928,120 +942,138 @@ fun InstagramVideoCard(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 8.dp, vertical = 4.dp),
+                .padding(horizontal = 14.dp, vertical = 10.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                // 1. React Button
-                TextButton(
-                    onClick = {
-                        if (isGuest) {
-                            onRequestAuth?.invoke()
-                            return@TextButton
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
+                // 1. React Button: Tap = like / unlike; Hold = reaction dock
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(8.dp))
+                        .pointerInput(activePostId, showReactionDock) {
+                            detectTapGestures(
+                                onLongPress = {
+                                    if (!isGuest) showReactionDock = true
+                                },
+                                onTap = {
+                                    if (isGuest) {
+                                        onRequestAuth?.invoke()
+                                        return@detectTapGestures
+                                    }
+                                    if (showReactionDock) {
+                                        showReactionDock = false
+                                    } else {
+                                        val isCurrentlyLiked = localReaction != null
+                                        if (isCurrentlyLiked) {
+                                            localReaction = null
+                                            localReactionCount = maxOf(0, localReactionCount - 1)
+                                            onReact?.invoke(activePost, "unlike")
+                                        } else {
+                                            localReaction = "like"
+                                            localReactionCount++
+                                            onReact?.invoke(activePost, "like")
+                                        }
+                                    }
+                                }
+                            )
                         }
-                        if (localReaction != null) {
-                            localReaction = null
-                            localReactionCount = maxOf(0, localReactionCount - 1)
-                        } else {
-                            localReaction = "like"
-                            localReactionCount++
-                            onReact?.invoke(activePost, "like")
-                        }
-                    },
-                    modifier = Modifier.testTag("like_reel_btn_$activePostId")
+                        .padding(horizontal = 4.dp, vertical = 4.dp)
+                        .testTag("like_reel_btn_$activePostId")
                 ) {
-                    val emoji = localReaction?.let { getReactionEmoji(it) }
-                    if (emoji != null) {
-                        Text(text = emoji, fontSize = 18.sp)
-                    } else {
-                        Icon(
-                            imageVector = Icons.Outlined.FavoriteBorder,
-                            contentDescription = "React",
-                            tint = Color(0xFFCBD5E1),
-                            modifier = Modifier.size(20.dp)
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        val emoji = localReaction?.let { getReactionEmoji(it) }
+                        if (emoji != null) {
+                            Text(text = emoji, fontSize = 20.sp)
+                        } else {
+                            Icon(
+                                imageVector = if (localReaction != null) Icons.Filled.Favorite else Icons.Outlined.FavoriteBorder,
+                                contentDescription = "Like",
+                                tint = if (localReaction != null) Color(0xFFF43F5E) else Color(0xFFF8FAFC),
+                                modifier = Modifier.size(22.dp)
+                            )
+                        }
+                        if (localReactionCount > 0) {
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                text = formatCount(localReactionCount),
+                                color = if (localReaction != null) Color(0xFFF43F5E) else Color(0xFFF8FAFC),
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        }
+                    }
+                }
+
+                // 2. Discuss Button (Matching Web: far fa-comment 22px #F8FAFC)
+                Row(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(8.dp))
+                        .clickable {
+                            if (isGuest) {
+                                onRequestAuth?.invoke()
+                                return@clickable
+                            }
+                            if (onOpenComments != null) onOpenComments(activePost)
+                            else showDiscussModal = true
+                        }
+                        .padding(horizontal = 4.dp, vertical = 4.dp)
+                        .testTag("discuss_reel_btn_$activePostId"),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        imageVector = Icons.Outlined.ChatBubbleOutline,
+                        contentDescription = "Discuss",
+                        tint = Color(0xFFF8FAFC),
+                        modifier = Modifier.size(22.dp)
+                    )
+                    if (localCommentCount > 0) {
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = formatCount(localCommentCount),
+                            color = Color(0xFFF8FAFC),
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.SemiBold
                         )
                     }
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text(
-                        text = localReaction?.replaceFirstChar { it.uppercase() } ?: "React",
-                        color = if (localReaction != null) Color(0xFFF43F5E) else Color(0xFFCBD5E1),
-                        fontSize = 13.sp,
-                        fontWeight = FontWeight.SemiBold
-                    )
                 }
 
-                // Long press / hover trigger button for reaction dock
-                IconButton(
-                    onClick = {
-                        if (isGuest) {
-                            onRequestAuth?.invoke()
-                        } else {
-                            showReactionDock = !showReactionDock
+                // 3. Share Button (Facing Northeast: ↗, Send icon rotated -35deg)
+                Row(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(8.dp))
+                        .clickable {
+                            if (isGuest) {
+                                onRequestAuth?.invoke()
+                                return@clickable
+                            }
+                            if (onShareClick != null) onShareClick(activePost)
+                            else showShareSheet = true
                         }
-                    },
-                    modifier = Modifier.size(28.dp)
+                        .padding(horizontal = 4.dp, vertical = 4.dp)
+                        .testTag("share_reel_btn_$activePostId"),
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
                     Icon(
-                        imageVector = Icons.Default.AddReaction,
-                        contentDescription = "All reactions",
-                        tint = Color(0xFF94A3B8),
-                        modifier = Modifier.size(16.dp)
-                    )
-                }
-
-                // 2. Discuss Button
-                TextButton(
-                    onClick = {
-                        if (isGuest) {
-                            onRequestAuth?.invoke()
-                            return@TextButton
-                        }
-                        if (onOpenComments != null) onOpenComments(activePost)
-                        else showDiscussModal = true
-                    },
-                    modifier = Modifier.testTag("discuss_reel_btn_$activePostId")
-                ) {
-                    Icon(
-                        imageVector = Icons.AutoMirrored.Filled.Chat,
-                        contentDescription = "Discuss",
-                        tint = Color(0xFFCBD5E1),
-                        modifier = Modifier.size(19.dp)
-                    )
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text(
-                        text = "Discuss",
-                        color = Color(0xFFCBD5E1),
-                        fontSize = 13.sp,
-                        fontWeight = FontWeight.SemiBold
-                    )
-                }
-
-                // 3. Share Button
-                TextButton(
-                    onClick = {
-                        if (isGuest) {
-                            onRequestAuth?.invoke()
-                            return@TextButton
-                        }
-                        if (onShareClick != null) onShareClick(activePost)
-                        else showShareSheet = true
-                    },
-                    modifier = Modifier.testTag("share_reel_btn_$activePostId")
-                ) {
-                    Icon(
-                        imageVector = Icons.AutoMirrored.Filled.Send,
+                        imageVector = Icons.Default.Send,
                         contentDescription = "Share",
-                        tint = Color(0xFFCBD5E1),
-                        modifier = Modifier.size(18.dp)
+                        tint = Color(0xFFF8FAFC),
+                        modifier = Modifier
+                            .size(20.dp)
+                            .graphicsLayer(rotationZ = -35f)
                     )
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text(
-                        text = "Share",
-                        color = Color(0xFFCBD5E1),
-                        fontSize = 13.sp,
-                        fontWeight = FontWeight.SemiBold
-                    )
+                    if (localShareCount > 0) {
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = formatCount(localShareCount),
+                            color = Color(0xFFF8FAFC),
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    }
                 }
             }
 

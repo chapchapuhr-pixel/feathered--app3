@@ -310,7 +310,9 @@ object PostsApiService {
         null
     }
 
-    private fun parseFeedItemToPost(obj: JSONObject): Post? {
+    fun parseFeedItemToPostExternal(obj: JSONObject): Post? = parseFeedItemToPost(obj)
+
+    internal fun parseFeedItemToPost(obj: JSONObject): Post? {
         if (obj.optInt("is_deleted", 0) == 1) return null
 
         val id = obj.optLong("id", obj.optLong("post_id", System.currentTimeMillis()))
