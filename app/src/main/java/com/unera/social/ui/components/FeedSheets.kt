@@ -39,7 +39,22 @@ import com.unera.social.model.Comment
 import com.unera.social.model.Post
 import com.unera.social.model.User
 import com.unera.social.model.UserReaction
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
+import com.unera.social.model.Product
+import com.unera.social.model.Event
+import com.unera.social.model.Song
+import com.unera.social.ui.screens.WebPostCard
 import kotlinx.coroutines.launch
+
+private fun formatCount(count: Int): String {
+    return when {
+        count >= 1_000_000 -> String.format("%.1fM", count / 1_000_000.0)
+        count >= 1_000 -> String.format("%.1fk", count / 1_000.0)
+        else -> count.toString()
+    }
+}
 
 // Reaction Emojis
 val REACTION_EMOJIS = listOf(
@@ -650,12 +665,31 @@ fun DiscussionsSheetDialog(
     onAddComment: (String) -> Unit,
     onLikeComment: (Long) -> Unit,
     onDeleteComment: ((Long) -> Unit)? = null,
-    onProfileClick: ((User) -> Unit)? = null
+    onProfileClick: ((User) -> Unit)? = null,
+    onLikePost: (() -> Unit)? = null,
+    onReactPost: ((String) -> Unit)? = null,
+    onSharePost: (() -> Unit)? = null,
+    onSavePost: (() -> Unit)? = null,
+    onOpenGallery: ((List<String>, Int) -> Unit)? = null,
+    onOpenProduct: ((Product) -> Unit)? = null,
+    onOpenEvent: ((Event) -> Unit)? = null,
+    onOpenGroup: ((Long) -> Unit)? = null,
+    onPlayMusic: ((Song) -> Unit)? = null,
+    isFollowing: Boolean = false,
+    onFollowToggle: (() -> Unit)? = null
 ) {
+    var postState by remember(post) { mutableStateOf(post) }
     var newCommentText by remember { mutableStateOf("") }
+    var selectedImageUri by remember { mutableStateOf<Uri?>(null) }
     var replyingTo by remember { mutableStateOf<String?>(null) }
     var showEmojiPicker by remember { mutableStateOf(false) }
     var selectedCommentForActions by remember { mutableStateOf<Comment?>(null) }
+
+    val photoPickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.PickVisualMedia()
+    ) { uri: Uri? ->
+        selectedImageUri = uri
+    }
 
     var liveComments by remember(post.id) { mutableStateOf(post.comments) }
     var isLoadingComments by remember(post.id) { mutableStateOf(post.comments.isEmpty()) }
@@ -678,7 +712,7 @@ fun DiscussionsSheetDialog(
     }
 
     val quickEmojis = listOf("❤️", "🔥", "😂", "👏", "🙌", "😍", "✨", "💯", "🎉")
-    val totalDiscussions = if (liveComments.isNotEmpty()) liveComments.size else post.commentsCount
+    val totalDiscussions = if (liveComments.isNotEmpty()) liveComments.size else postState.commentsCount
 
     Dialog(
         onDismissRequest = onDismiss,
@@ -691,99 +725,126 @@ fun DiscussionsSheetDialog(
                 .testTag("discussions_sheet_dialog")
         ) {
             Column(modifier = Modifier.fillMaxSize()) {
-                // Top Header
+                // Top Header (Matching Web CommentsSheet: sticky, #0B1120, border-b #1E293B)
+                val isVideoPost = postState.postType == "video" || postState.postType == "reel" ||
+                    postState.videoUrl != null || postState.mediaType == "video" ||
+                    postState.mediaUrls.any { it.endsWith(".mp4") } || postState.mediaUrl?.endsWith(".mp4") == true
+
+                val sheetTitle = when {
+                    postState.postType == "event" || postState.event != null -> "Event Discussion"
+                    isVideoPost -> "Video Discussion"
+                    else -> "Post"
+                }
+
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(56.dp)
                         .background(Color(0xFF0B1120))
-                        .padding(horizontal = 16.dp),
+                        .padding(horizontal = 14.dp, vertical = 10.dp),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        IconButton(onClick = onDismiss) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        IconButton(
+                            onClick = onDismiss,
+                            modifier = Modifier
+                                .size(40.dp)
+                                .clip(CircleShape)
+                        ) {
                             Icon(
                                 imageVector = Icons.AutoMirrored.Filled.ArrowBack,
                                 contentDescription = "Back",
-                                tint = Color(0xFFF8FAFC)
+                                tint = Color(0xFFE4E6EB),
+                                modifier = Modifier.size(22.dp)
                             )
                         }
-                        Spacer(modifier = Modifier.width(8.dp))
+
                         Text(
-                            text = "Discussions",
-                            fontSize = 20.sp,
+                            text = sheetTitle,
+                            fontSize = 21.sp,
                             fontWeight = FontWeight.Bold,
-                            color = Color(0xFFF8FAFC)
+                            color = Color(0xFFE4E6EB)
                         )
                     }
 
-                    Text(
-                        text = "$totalDiscussions discussions",
-                        color = Color(0xFFCBD5E1),
-                        fontSize = 14.sp,
-                        fontWeight = FontWeight.SemiBold
-                    )
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        Text(
+                            text = "${formatCount(totalDiscussions)} discussions",
+                            color = Color(0xFFCBD5E1),
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.SemiBold
+                        )
+
+                        TextButton(
+                            onClick = onDismiss,
+                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp)
+                        ) {
+                            Text(
+                                text = "See less",
+                                color = Color(0xFF1877F2),
+                                fontSize = 16.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
                 }
 
                 HorizontalDivider(color = Color(0xFF1E293B), thickness = 1.dp)
 
-                // Scrollable content: Post preview + List of comments
+                // Scrollable content: Full Original Post Preview + List of comments
                 LazyColumn(
                     modifier = Modifier
                         .weight(1f)
                         .fillMaxWidth()
-                        .padding(14.dp)
                 ) {
-                    // Original Post Mini Header
+                    // Full Original Post Card (Matching Web: <Post hideCommentPreview={true} ... />)
                     item {
-                        Card(
+                        Box(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(bottom = 16.dp),
-                            shape = RoundedCornerShape(12.dp),
-                            colors = CardDefaults.cardColors(containerColor = Color(0xFF0F172A)),
-                            border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF1E293B))
+                                .border(width = 1.dp, color = Color(0xFF1E293B))
                         ) {
-                            Column(modifier = Modifier.padding(12.dp)) {
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    modifier = Modifier.clickable { onProfileClick?.invoke(post.author) }
-                                ) {
-                                    FeatheredAvatar(
-                                        name = post.author.name,
-                                        imageUrl = post.author.profileImageUrl,
-                                        size = 38.dp,
-                                        username = post.author.username
-                                    )
-                                    Spacer(modifier = Modifier.width(10.dp))
-                                    Column {
-                                        Text(
-                                            text = post.author.name,
-                                            fontWeight = FontWeight.Bold,
-                                            fontSize = 14.sp,
-                                            color = Color(0xFFF8FAFC)
-                                        )
-                                        Text(
-                                            text = post.timestamp,
-                                            fontSize = 12.sp,
-                                            color = Color(0xFF94A3B8)
-                                        )
-                                    }
-                                }
-
-                                if (post.content.isNotBlank()) {
-                                    Spacer(modifier = Modifier.height(8.dp))
-                                    Text(
-                                        text = post.content,
-                                        fontSize = 13.sp,
-                                        color = Color(0xFFCBD5E1),
-                                        maxLines = 3,
-                                        overflow = TextOverflow.Ellipsis
-                                    )
-                                }
-                            }
+                            WebPostCard(
+                                post = postState,
+                                currentUser = currentUser,
+                                isFollowing = isFollowing,
+                                onFollowToggle = { onFollowToggle?.invoke() },
+                                onLike = {
+                                    val newLiked = !postState.isLiked
+                                    val newCount = if (newLiked) postState.likesCount + 1 else (postState.likesCount - 1).coerceAtLeast(0)
+                                    postState = postState.copy(isLiked = newLiked, likesCount = newCount)
+                                    onLikePost?.invoke()
+                                },
+                                onReact = { type ->
+                                    postState = postState.copy(myReaction = type)
+                                    onReactPost?.invoke(type)
+                                },
+                                onComment = { /* already viewing discussion */ },
+                                onShare = { onSharePost?.invoke() },
+                                onSave = {
+                                    postState = postState.copy(isSaved = !postState.isSaved)
+                                    onSavePost?.invoke()
+                                },
+                                onUserClick = { onProfileClick?.invoke(postState.author) },
+                                onOpenGallery = { urls, idx -> onOpenGallery?.invoke(urls, idx) },
+                                onOpenProduct = { onOpenProduct?.invoke(it) },
+                                onOpenEvent = { onOpenEvent?.invoke(it) },
+                                onOpenGroup = { onOpenGroup?.invoke(it) },
+                                onPlayMusic = { onPlayMusic?.invoke(it) },
+                                hideCommentPreview = true
+                            )
                         }
+                    }
+
+                    item {
+                        HorizontalDivider(color = Color(0xFF1E293B), thickness = 1.dp)
+                        Spacer(modifier = Modifier.height(10.dp))
                     }
 
                     // Comments list
@@ -813,13 +874,14 @@ fun DiscussionsSheetDialog(
                                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                                     Text(
                                         text = "No discussions yet",
-                                        fontSize = 17.sp,
+                                        fontSize = 19.sp,
                                         fontWeight = FontWeight.Bold,
-                                        color = Color(0xFFCBD5E1)
+                                        color = Color(0xFFB0B3B8)
                                     )
+                                    Spacer(modifier = Modifier.height(4.dp))
                                     Text(
                                         text = "Be the first to start a discussion!",
-                                        fontSize = 13.sp,
+                                        fontSize = 14.sp,
                                         color = Color(0xFF94A3B8)
                                     )
                                 }
@@ -827,23 +889,87 @@ fun DiscussionsSheetDialog(
                         }
                     } else {
                         items(liveComments, key = { it.id }) { comment ->
-                            CommentItemRow(
-                                comment = comment,
-                                onLike = {
-                                    liveComments = liveComments.map { c ->
-                                        if (c.id == comment.id) {
-                                            val newLiked = !c.isLiked
-                                            val newCount = if (newLiked) c.likesCount + 1 else (c.likesCount - 1).coerceAtLeast(0)
-                                            c.copy(isLiked = newLiked, likesCount = newCount)
-                                        } else c
-                                    }
-                                    onLikeComment(comment.id)
-                                },
-                                onReply = { replyingTo = comment.author.name },
-                                onMoreOptions = { selectedCommentForActions = comment },
-                                onUserClick = { onProfileClick?.invoke(comment.author) }
+                            Box(modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp)) {
+                                CommentItemRow(
+                                    comment = comment,
+                                    onLike = {
+                                        liveComments = liveComments.map { c ->
+                                            if (c.id == comment.id) {
+                                                val newLiked = !c.isLiked
+                                                val newCount = if (newLiked) c.likesCount + 1 else (c.likesCount - 1).coerceAtLeast(0)
+                                                c.copy(isLiked = newLiked, likesCount = newCount)
+                                            } else c
+                                        }
+                                        onLikeComment(comment.id)
+                                    },
+                                    onReply = { replyingTo = comment.author.name },
+                                    onMoreOptions = { selectedCommentForActions = comment },
+                                    onUserClick = { onProfileClick?.invoke(comment.author) }
+                                )
+                            }
+                        }
+                    }
+
+                    item {
+                        Spacer(modifier = Modifier.height(16.dp))
+                    }
+                }
+
+                // Replying to banner if active
+                if (replyingTo != null) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(Color(0xFF162137))
+                            .padding(horizontal = 14.dp, vertical = 8.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(text = "Replying to ", fontSize = 12.sp, color = Color(0xFF94A3B8))
+                            Text(text = replyingTo ?: "", fontSize = 12.sp, color = Color(0xFF1877F2), fontWeight = FontWeight.Bold)
+                        }
+                        IconButton(onClick = { replyingTo = null }, modifier = Modifier.size(22.dp)) {
+                            Icon(imageVector = Icons.Default.Close, contentDescription = "Cancel reply", tint = Color.White, modifier = Modifier.size(16.dp))
+                        }
+                    }
+                }
+
+                // Selected image preview if chosen
+                if (selectedImageUri != null) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(Color(0xFF0B1120))
+                            .padding(horizontal = 14.dp, vertical = 6.dp)
+                    ) {
+                        Box(modifier = Modifier.wrapContentSize()) {
+                            AsyncImage(
+                                model = selectedImageUri,
+                                contentDescription = "Selected comment attachment",
+                                contentScale = ContentScale.Crop,
+                                modifier = Modifier
+                                    .height(72.dp)
+                                    .widthIn(max = 100.dp)
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .border(1.dp, Color(0xFF1E293B), RoundedCornerShape(8.dp))
                             )
-                            Spacer(modifier = Modifier.height(14.dp))
+                            IconButton(
+                                onClick = { selectedImageUri = null },
+                                modifier = Modifier
+                                    .size(22.dp)
+                                    .align(Alignment.TopEnd)
+                                    .offset(x = 6.dp, y = (-6).dp)
+                                    .clip(CircleShape)
+                                    .background(Color(0xFFEF4444))
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Close,
+                                    contentDescription = "Remove attachment",
+                                    tint = Color.White,
+                                    modifier = Modifier.size(12.dp)
+                                )
+                            }
                         }
                     }
                 }
@@ -871,36 +997,33 @@ fun DiscussionsSheetDialog(
                     }
                 }
 
-                // Replying to banner if active
-                if (replyingTo != null) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .background(Color(0xFF162137))
-                            .padding(horizontal = 14.dp, vertical = 6.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            text = "Replying to $replyingTo",
-                            fontSize = 12.sp,
-                            color = Color(0xFF1877F2),
-                            fontWeight = FontWeight.Bold
-                        )
-                        IconButton(onClick = { replyingTo = null }, modifier = Modifier.size(24.dp)) {
-                            Icon(imageVector = Icons.Default.Close, contentDescription = "Cancel reply", tint = Color.White)
-                        }
-                    }
-                }
-
-                // Input bar at bottom
+                // Sticky Bottom Input bar
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
                         .background(Color(0xFF0B1120))
-                        .padding(horizontal = 12.dp, vertical = 10.dp),
+                        .border(1.dp, Color(0xFF1E293B))
+                        .padding(horizontal = 10.dp, vertical = 8.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
+                    // Image attachment button
+                    IconButton(
+                        onClick = {
+                            photoPickerLauncher.launch(
+                                PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+                            )
+                        },
+                        modifier = Modifier.size(38.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Outlined.Image,
+                            contentDescription = "Attach image",
+                            tint = if (selectedImageUri != null) Color(0xFF1877F2) else Color(0xFF94A3B8),
+                            modifier = Modifier.size(22.dp)
+                        )
+                    }
+
+                    // Emoji toggle button
                     IconButton(
                         onClick = { showEmojiPicker = !showEmojiPicker },
                         modifier = Modifier.size(38.dp)
@@ -908,10 +1031,12 @@ fun DiscussionsSheetDialog(
                         Icon(
                             imageVector = Icons.Outlined.SentimentSatisfied,
                             contentDescription = "Emoji",
-                            tint = if (showEmojiPicker) Color(0xFF1877F2) else Color(0xFF94A3B8)
+                            tint = if (showEmojiPicker) Color(0xFF1877F2) else Color(0xFF94A3B8),
+                            modifier = Modifier.size(22.dp)
                         )
                     }
 
+                    // Input Text Field
                     OutlinedTextField(
                         value = newCommentText,
                         onValueChange = { newCommentText = it },
@@ -937,26 +1062,29 @@ fun DiscussionsSheetDialog(
                         singleLine = true
                     )
 
+                    // Send Button
+                    val canSend = newCommentText.isNotBlank() || selectedImageUri != null
                     IconButton(
                         onClick = {
-                            if (newCommentText.isNotBlank()) {
+                            if (canSend) {
                                 val fullText = if (replyingTo != null) "@$replyingTo $newCommentText" else newCommentText
                                 onAddComment(fullText)
                                 newCommentText = ""
+                                selectedImageUri = null
                                 replyingTo = null
                                 showEmojiPicker = false
                             }
                         },
-                        enabled = newCommentText.isNotBlank(),
+                        enabled = canSend,
                         modifier = Modifier
-                            .size(42.dp)
+                            .size(40.dp)
                             .clip(CircleShape)
-                            .background(if (newCommentText.isNotBlank()) Color(0xFF1877F2) else Color(0xFF1E293B))
+                            .background(if (canSend) Color(0xFF1877F2) else Color(0xFF1E293B))
                     ) {
                         Icon(
                             imageVector = Icons.AutoMirrored.Filled.Send,
                             contentDescription = "Send",
-                            tint = if (newCommentText.isNotBlank()) Color.White else Color(0xFF64748B),
+                            tint = if (canSend) Color.White else Color(0xFF64748B),
                             modifier = Modifier.size(18.dp)
                         )
                     }

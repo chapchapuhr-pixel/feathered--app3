@@ -33,6 +33,15 @@ import com.unera.social.ui.components.VerifiedBadge
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
+import android.net.Uri
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.lazy.LazyRow
+import com.unera.social.ui.components.FeatheredAvatar
+import com.unera.social.ui.components.PostUploadBottomPill
+import com.unera.social.ui.components.PostUploadState
 import coil.compose.AsyncImage
 import com.unera.social.model.*
 
@@ -83,6 +92,8 @@ fun GroupsScreen(
     onSetMemberRole: (Long, Long, String) -> Unit,
     onRemoveMember: (Long, Long) -> Unit,
     onProfileClick: (Long) -> Unit,
+    uploadState: PostUploadState? = null,
+    onDismissUpload: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     var activeGroupId by remember { mutableStateOf(initialGroupId) }
@@ -143,6 +154,8 @@ fun GroupsScreen(
             onSetMemberRole = { userId, role -> onSetMemberRole(activeGroup.id, userId, role) },
             onRemoveMember = { userId -> onRemoveMember(activeGroup.id, userId) },
             onProfileClick = onProfileClick,
+            uploadState = uploadState,
+            onDismissUpload = onDismissUpload,
             modifier = modifier
         )
     } else {
@@ -584,6 +597,20 @@ fun GroupsScreen(
             confirmButton = {},
             containerColor = Color(0xFF0F172A)
         )
+    }
+
+    if (uploadState != null) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(bottom = 16.dp),
+            contentAlignment = Alignment.BottomCenter
+        ) {
+            PostUploadBottomPill(
+                uploadState = uploadState,
+                onDismiss = onDismissUpload
+            )
+        }
     }
 }
 
@@ -1618,7 +1645,16 @@ fun CreateGroupPostDialog(
     onSubmit: (String, List<String>, Double?, String, String?, String?, String, String?, String?, String?, String?, String?, String?) -> Unit
 ) {
     var content by remember { mutableStateOf("") }
-    var imageUrl by remember { mutableStateOf("") }
+    var selectedPhotos by remember { mutableStateOf<List<Uri>>(emptyList()) }
+
+    // Photo picker launcher (Multiple images, max 10, photos only)
+    val photoPickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.PickMultipleVisualMedia(maxItems = 10)
+    ) { uris: List<Uri> ->
+        if (uris.isNotEmpty()) {
+            selectedPhotos = (selectedPhotos + uris).distinct().take(10)
+        }
+    }
 
     // Buy & Sell
     var priceStr by remember { mutableStateOf("") }
@@ -1630,122 +1666,436 @@ fun CreateGroupPostDialog(
     var company by remember { mutableStateOf("") }
     var salary by remember { mutableStateOf("") }
     var applicationValue by remember { mutableStateOf("") }
+    var jobType by remember { mutableStateOf("Full-time") }
 
-    AlertDialog(
+    val canPublish = content.isNotBlank() || selectedPhotos.isNotEmpty() || jobTitle.isNotBlank() || priceStr.isNotBlank()
+
+    Dialog(
         onDismissRequest = onDismiss,
-        title = {
-            Text(
-                text = when (group.category) {
-                    "buy_sell" -> "List Item for Sale"
-                    "recruitment" -> "Post Job Opening"
-                    else -> "Post to ${group.name}"
-                },
-                color = Color.White,
-                fontWeight = FontWeight.Bold
-            )
-        },
-        text = {
-            Column(
-                modifier = Modifier.fillMaxWidth(),
-                verticalArrangement = Arrangement.spacedBy(10.dp)
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Color.Black.copy(alpha = 0.7f)),
+            contentAlignment = Alignment.Center
+        ) {
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth(0.92f)
+                    .fillMaxHeight(0.88f),
+                shape = RoundedCornerShape(20.dp),
+                colors = CardDefaults.cardColors(containerColor = Color(0xFF0F172A)),
+                border = BorderStroke(1.dp, Color(0xFF1E293B))
             ) {
-                if (group.category == "buy_sell") {
-                    OutlinedTextField(
-                        value = priceStr,
-                        onValueChange = { priceStr = it },
-                        label = { Text("Price (USD)", color = Color(0xFF94A3B8)) },
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                    OutlinedTextField(
-                        value = condition,
-                        onValueChange = { condition = it },
-                        label = { Text("Condition (e.g. Pristine, Like New)", color = Color(0xFF94A3B8)) },
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                    OutlinedTextField(
-                        value = location,
-                        onValueChange = { location = it },
-                        label = { Text("Pickup Location", color = Color(0xFF94A3B8)) },
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                }
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(18.dp)
+                ) {
+                    // Header
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            FeatheredAvatar(
+                                name = currentUser.name,
+                                imageUrl = currentUser.profileImageUrl,
+                                size = 42.dp,
+                                username = currentUser.username
+                            )
+                            Spacer(modifier = Modifier.width(12.dp))
+                            Column {
+                                Text(
+                                    text = currentUser.name,
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 15.sp,
+                                    color = Color(0xFFF8FAFC)
+                                )
+                                Text(
+                                    text = "Posting to ${group.name}",
+                                    fontSize = 12.sp,
+                                    color = Color(0xFF1877F2),
+                                    fontWeight = FontWeight.SemiBold,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                        }
 
-                if (group.category == "recruitment") {
-                    OutlinedTextField(
-                        value = jobTitle,
-                        onValueChange = { jobTitle = it },
-                        label = { Text("Job Title", color = Color(0xFF94A3B8)) },
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                    OutlinedTextField(
-                        value = company,
-                        onValueChange = { company = it },
-                        label = { Text("Company Name", color = Color(0xFF94A3B8)) },
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                    OutlinedTextField(
-                        value = salary,
-                        onValueChange = { salary = it },
-                        label = { Text("Salary Range", color = Color(0xFF94A3B8)) },
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                    OutlinedTextField(
-                        value = applicationValue,
-                        onValueChange = { applicationValue = it },
-                        label = { Text("Application Email / Link", color = Color(0xFF94A3B8)) },
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                }
-
-                OutlinedTextField(
-                    value = content,
-                    onValueChange = { content = it },
-                    label = { Text("Description / Post Content", color = Color(0xFF94A3B8)) },
-                    modifier = Modifier.fillMaxWidth(),
-                    minLines = 3
-                )
-
-                OutlinedTextField(
-                    value = imageUrl,
-                    onValueChange = { imageUrl = it },
-                    label = { Text("Image URL (optional)", color = Color(0xFF94A3B8)) },
-                    modifier = Modifier.fillMaxWidth()
-                )
-            }
-        },
-        confirmButton = {
-            Button(
-                onClick = {
-                    if (content.isNotBlank() || jobTitle.isNotBlank() || priceStr.isNotBlank()) {
-                        val images = if (imageUrl.isNotBlank()) listOf(imageUrl.trim()) else emptyList()
-                        val parsedPrice = priceStr.toDoubleOrNull()
-                        onSubmit(
-                            content.trim(),
-                            images,
-                            parsedPrice,
-                            "USD",
-                            condition.ifBlank { null },
-                            location.ifBlank { null },
-                            "available",
-                            jobTitle.ifBlank { null },
-                            company.ifBlank { null },
-                            "Full-time",
-                            salary.ifBlank { null },
-                            if (applicationValue.isNotBlank()) "email" else null,
-                            applicationValue.ifBlank { null }
-                        )
+                        IconButton(
+                            onClick = onDismiss,
+                            modifier = Modifier
+                                .size(32.dp)
+                                .clip(CircleShape)
+                                .background(Color(0xFF1E293B))
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Close,
+                                contentDescription = "Close",
+                                tint = Color(0xFF94A3B8),
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
                     }
-                },
-                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1877F2))
-            ) {
-                Text("Publish")
+
+                    Spacer(modifier = Modifier.height(14.dp))
+                    HorizontalDivider(color = Color(0xFF1E293B))
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    // Scrollable form fields
+                    LazyColumn(
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxWidth(),
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        // Category specific extra fields
+                        if (group.category == "buy_sell") {
+                            item {
+                                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    OutlinedTextField(
+                                        value = priceStr,
+                                        onValueChange = { priceStr = it },
+                                        label = { Text("Price (USD)", color = Color(0xFF94A3B8)) },
+                                        colors = OutlinedTextFieldDefaults.colors(
+                                            focusedContainerColor = Color(0xFF0B1120),
+                                            unfocusedContainerColor = Color(0xFF0B1120),
+                                            focusedTextColor = Color(0xFFF8FAFC),
+                                            unfocusedTextColor = Color(0xFFF8FAFC),
+                                            focusedBorderColor = Color(0xFF1877F2),
+                                            unfocusedBorderColor = Color(0xFF1E293B)
+                                        ),
+                                        shape = RoundedCornerShape(12.dp),
+                                        modifier = Modifier.fillMaxWidth()
+                                    )
+                                    OutlinedTextField(
+                                        value = condition,
+                                        onValueChange = { condition = it },
+                                        label = { Text("Condition (e.g. Brand New, Used - Like New)", color = Color(0xFF94A3B8)) },
+                                        colors = OutlinedTextFieldDefaults.colors(
+                                            focusedContainerColor = Color(0xFF0B1120),
+                                            unfocusedContainerColor = Color(0xFF0B1120),
+                                            focusedTextColor = Color(0xFFF8FAFC),
+                                            unfocusedTextColor = Color(0xFFF8FAFC),
+                                            focusedBorderColor = Color(0xFF1877F2),
+                                            unfocusedBorderColor = Color(0xFF1E293B)
+                                        ),
+                                        shape = RoundedCornerShape(12.dp),
+                                        modifier = Modifier.fillMaxWidth()
+                                    )
+                                    OutlinedTextField(
+                                        value = location,
+                                        onValueChange = { location = it },
+                                        label = { Text("Pickup Location / City", color = Color(0xFF94A3B8)) },
+                                        colors = OutlinedTextFieldDefaults.colors(
+                                            focusedContainerColor = Color(0xFF0B1120),
+                                            unfocusedContainerColor = Color(0xFF0B1120),
+                                            focusedTextColor = Color(0xFFF8FAFC),
+                                            unfocusedTextColor = Color(0xFFF8FAFC),
+                                            focusedBorderColor = Color(0xFF1877F2),
+                                            unfocusedBorderColor = Color(0xFF1E293B)
+                                        ),
+                                        shape = RoundedCornerShape(12.dp),
+                                        modifier = Modifier.fillMaxWidth()
+                                    )
+                                }
+                            }
+                        }
+
+                        if (group.category == "recruitment") {
+                            item {
+                                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    OutlinedTextField(
+                                        value = jobTitle,
+                                        onValueChange = { jobTitle = it },
+                                        label = { Text("Job Title", color = Color(0xFF94A3B8)) },
+                                        colors = OutlinedTextFieldDefaults.colors(
+                                            focusedContainerColor = Color(0xFF0B1120),
+                                            unfocusedContainerColor = Color(0xFF0B1120),
+                                            focusedTextColor = Color(0xFFF8FAFC),
+                                            unfocusedTextColor = Color(0xFFF8FAFC),
+                                            focusedBorderColor = Color(0xFF1877F2),
+                                            unfocusedBorderColor = Color(0xFF1E293B)
+                                        ),
+                                        shape = RoundedCornerShape(12.dp),
+                                        modifier = Modifier.fillMaxWidth()
+                                    )
+                                    OutlinedTextField(
+                                        value = company,
+                                        onValueChange = { company = it },
+                                        label = { Text("Company Name", color = Color(0xFF94A3B8)) },
+                                        colors = OutlinedTextFieldDefaults.colors(
+                                            focusedContainerColor = Color(0xFF0B1120),
+                                            unfocusedContainerColor = Color(0xFF0B1120),
+                                            focusedTextColor = Color(0xFFF8FAFC),
+                                            unfocusedTextColor = Color(0xFFF8FAFC),
+                                            focusedBorderColor = Color(0xFF1877F2),
+                                            unfocusedBorderColor = Color(0xFF1E293B)
+                                        ),
+                                        shape = RoundedCornerShape(12.dp),
+                                        modifier = Modifier.fillMaxWidth()
+                                    )
+                                    OutlinedTextField(
+                                        value = salary,
+                                        onValueChange = { salary = it },
+                                        label = { Text("Salary Range (e.g. $40,000 - $60,000)", color = Color(0xFF94A3B8)) },
+                                        colors = OutlinedTextFieldDefaults.colors(
+                                            focusedContainerColor = Color(0xFF0B1120),
+                                            unfocusedContainerColor = Color(0xFF0B1120),
+                                            focusedTextColor = Color(0xFFF8FAFC),
+                                            unfocusedTextColor = Color(0xFFF8FAFC),
+                                            focusedBorderColor = Color(0xFF1877F2),
+                                            unfocusedBorderColor = Color(0xFF1E293B)
+                                        ),
+                                        shape = RoundedCornerShape(12.dp),
+                                        modifier = Modifier.fillMaxWidth()
+                                    )
+                                    OutlinedTextField(
+                                        value = applicationValue,
+                                        onValueChange = { applicationValue = it },
+                                        label = { Text("Application Email / Link", color = Color(0xFF94A3B8)) },
+                                        colors = OutlinedTextFieldDefaults.colors(
+                                            focusedContainerColor = Color(0xFF0B1120),
+                                            unfocusedContainerColor = Color(0xFF0B1120),
+                                            focusedTextColor = Color(0xFFF8FAFC),
+                                            unfocusedTextColor = Color(0xFFF8FAFC),
+                                            focusedBorderColor = Color(0xFF1877F2),
+                                            unfocusedBorderColor = Color(0xFF1E293B)
+                                        ),
+                                        shape = RoundedCornerShape(12.dp),
+                                        modifier = Modifier.fillMaxWidth()
+                                    )
+                                }
+                            }
+                        }
+
+                        // Content text input
+                        item {
+                            OutlinedTextField(
+                                value = content,
+                                onValueChange = { content = it },
+                                placeholder = {
+                                    Text(
+                                        text = when (group.category) {
+                                            "buy_sell" -> "Describe the item you are selling..."
+                                            "recruitment" -> "Describe the job requirements and responsibilities..."
+                                            else -> "What's on your mind?"
+                                        },
+                                        color = Color(0xFF64748B),
+                                        fontSize = 15.sp
+                                    )
+                                },
+                                colors = OutlinedTextFieldDefaults.colors(
+                                    focusedContainerColor = Color(0xFF0B1120),
+                                    unfocusedContainerColor = Color(0xFF0B1120),
+                                    focusedTextColor = Color(0xFFF8FAFC),
+                                    unfocusedTextColor = Color(0xFFF8FAFC),
+                                    focusedBorderColor = Color(0xFF1877F2),
+                                    unfocusedBorderColor = Color(0xFF1E293B)
+                                ),
+                                shape = RoundedCornerShape(14.dp),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .heightIn(min = 100.dp, max = 220.dp)
+                            )
+                        }
+
+                        // Selected photos preview row
+                        if (selectedPhotos.isNotEmpty()) {
+                            item {
+                                Column {
+                                    Text(
+                                        text = "${selectedPhotos.size} photo${if (selectedPhotos.size > 1) "s" else ""} attached",
+                                        fontSize = 12.sp,
+                                        color = Color(0xFF94A3B8),
+                                        fontWeight = FontWeight.SemiBold,
+                                        modifier = Modifier.padding(bottom = 6.dp)
+                                    )
+                                    LazyRow(
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                        modifier = Modifier.fillMaxWidth()
+                                    ) {
+                                        items(selectedPhotos) { uri ->
+                                            Box(modifier = Modifier.size(80.dp)) {
+                                                AsyncImage(
+                                                    model = uri,
+                                                    contentDescription = "Selected photo",
+                                                    contentScale = ContentScale.Crop,
+                                                    modifier = Modifier
+                                                        .fillMaxSize()
+                                                        .clip(RoundedCornerShape(10.dp))
+                                                        .border(1.dp, Color(0xFF1E293B), RoundedCornerShape(10.dp))
+                                                )
+                                                IconButton(
+                                                    onClick = {
+                                                        selectedPhotos = selectedPhotos.filter { it != uri }
+                                                    },
+                                                    modifier = Modifier
+                                                        .size(22.dp)
+                                                        .align(Alignment.TopEnd)
+                                                        .offset(x = 4.dp, y = (-4).dp)
+                                                        .clip(CircleShape)
+                                                        .background(Color(0xFFEF4444))
+                                                ) {
+                                                    Icon(
+                                                        imageVector = Icons.Default.Close,
+                                                        contentDescription = "Remove photo",
+                                                        tint = Color.White,
+                                                        modifier = Modifier.size(12.dp)
+                                                    )
+                                                }
+                                            }
+                                        }
+
+                                        if (selectedPhotos.size < 10) {
+                                            item {
+                                                Box(
+                                                    modifier = Modifier
+                                                        .size(80.dp)
+                                                        .clip(RoundedCornerShape(10.dp))
+                                                        .background(Color(0xFF162137))
+                                                        .border(1.dp, Color(0xFF1E293B), RoundedCornerShape(10.dp))
+                                                        .clickable {
+                                                            photoPickerLauncher.launch(
+                                                                PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+                                                            )
+                                                        },
+                                                    contentAlignment = Alignment.Center
+                                                ) {
+                                                    Icon(
+                                                        imageVector = Icons.Default.Add,
+                                                        contentDescription = "Add more",
+                                                        tint = Color(0xFF94A3B8)
+                                                    )
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        // Photo Picker action button & note
+                        item {
+                            Card(
+                                colors = CardDefaults.cardColors(containerColor = Color(0xFF162137)),
+                                shape = RoundedCornerShape(14.dp),
+                                border = BorderStroke(1.dp, Color(0xFF1E293B)),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable {
+                                        photoPickerLauncher.launch(
+                                            PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+                                        )
+                                    }
+                            ) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = 14.dp, vertical = 10.dp),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Icon(
+                                            imageVector = Icons.Default.AddPhotoAlternate,
+                                            contentDescription = "Add Photos",
+                                            tint = Color(0xFF45BD62),
+                                            modifier = Modifier.size(24.dp)
+                                        )
+                                        Spacer(modifier = Modifier.width(10.dp))
+                                        Column {
+                                            Text(
+                                                text = if (selectedPhotos.isEmpty()) "Add Photos to Post" else "Add More Photos",
+                                                color = Color(0xFFF8FAFC),
+                                                fontWeight = FontWeight.SemiBold,
+                                                fontSize = 14.sp
+                                            )
+                                            Text(
+                                                text = "Photos only (up to 10). Video uploads disabled in groups.",
+                                                color = Color(0xFF94A3B8),
+                                                fontSize = 11.sp
+                                            )
+                                        }
+                                    }
+
+                                    Icon(
+                                        imageVector = Icons.Default.ChevronRight,
+                                        contentDescription = null,
+                                        tint = Color(0xFF64748B)
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(10.dp))
+                    HorizontalDivider(color = Color(0xFF1E293B))
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    // Buttons
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        OutlinedButton(
+                            onClick = onDismiss,
+                            shape = RoundedCornerShape(12.dp),
+                            border = BorderStroke(1.dp, Color(0xFF1E293B)),
+                            colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFF94A3B8)),
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(46.dp)
+                        ) {
+                            Text("Cancel", fontWeight = FontWeight.SemiBold)
+                        }
+
+                        Button(
+                            onClick = {
+                                if (canPublish) {
+                                    val photoUriStrings = selectedPhotos.map { it.toString() }
+                                    val parsedPrice = priceStr.toDoubleOrNull()
+                                    onSubmit(
+                                        content.trim(),
+                                        photoUriStrings,
+                                        parsedPrice,
+                                        "USD",
+                                        condition.ifBlank { null },
+                                        location.ifBlank { null },
+                                        "available",
+                                        jobTitle.ifBlank { null },
+                                        company.ifBlank { null },
+                                        jobType,
+                                        salary.ifBlank { null },
+                                        if (applicationValue.isNotBlank()) "email" else null,
+                                        applicationValue.ifBlank { null }
+                                    )
+                                }
+                            },
+                            enabled = canPublish,
+                            shape = RoundedCornerShape(12.dp),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = Color(0xFF1877F2),
+                                disabledContainerColor = Color(0xFF1E293B)
+                            ),
+                            modifier = Modifier
+                                .weight(1.5f)
+                                .height(46.dp)
+                        ) {
+                            Text(
+                                text = "Publish Post",
+                                fontWeight = FontWeight.Bold,
+                                color = if (canPublish) Color.White else Color(0xFF64748B)
+                            )
+                        }
+                    }
+                }
             }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) { Text("Cancel", color = Color(0xFF94A3B8)) }
-        },
-        containerColor = Color(0xFF0F172A)
-    )
+        }
+    }
 }
 
 @Composable

@@ -402,6 +402,8 @@ object GroupsApiService {
         userId: Long,
         content: String,
         mediaUrls: List<String> = emptyList(),
+        mediaTypes: List<String> = emptyList(),
+        mediaMeta: List<Map<String, String>> = emptyList(),
         price: Double? = null,
         currency: String = "USD",
         condition: String? = null,
@@ -413,31 +415,67 @@ object GroupsApiService {
         salary: String? = null,
         applicationType: String? = null,
         applicationValue: String? = null,
-        expiryDate: String? = null
+        expiryDate: String? = null,
+        street: String? = null,
+        district: String? = null,
+        region: String? = null,
+        country: String? = null,
+        artist: String? = null,
+        series: String? = null,
+        episode: String? = null,
+        duration: String? = null
     ): GroupPost? = withContext(Dispatchers.IO) {
         try {
             val url = URL("$BASE_URL/api/group-posts")
             val conn = (url.openConnection() as HttpURLConnection).apply {
                 requestMethod = "POST"
                 doOutput = true
-                connectTimeout = 10000
-                readTimeout = 10000
+                connectTimeout = 15000
+                readTimeout = 15000
                 setRequestProperty("Content-Type", "application/json; charset=utf-8")
                 setRequestProperty("Accept", "application/json")
                 setRequestProperty("User-Agent", USER_AGENT)
+                setRequestProperty("x-user-id", userId.toString())
             }
 
             val payload = JSONObject().apply {
                 put("group_id", groupId)
                 put("user_id", userId)
-                put("content", content)
+                if (content.isNotBlank()) {
+                    put("content", content.trim())
+                } else {
+                    put("content", JSONObject.NULL)
+                }
+
                 if (mediaUrls.isNotEmpty()) {
                     put("media_url", mediaUrls.first())
                     put("media_type", "image")
                     val arr = JSONArray()
                     mediaUrls.forEach { arr.put(it) }
                     put("media_urls", arr)
+
+                    val typesArr = JSONArray()
+                    if (mediaTypes.isNotEmpty()) {
+                        mediaTypes.forEach { typesArr.put(it) }
+                    } else {
+                        mediaUrls.forEach { _ -> typesArr.put("image") }
+                    }
+                    put("media_types", typesArr)
+
+                    if (mediaMeta.isNotEmpty()) {
+                        val metaArr = JSONArray()
+                        mediaMeta.forEach { map ->
+                            val obj = JSONObject()
+                            map.forEach { (k, v) -> obj.put(k, v) }
+                            metaArr.put(obj)
+                        }
+                        put("media_meta", metaArr)
+                    }
+                } else {
+                    put("media_url", JSONObject.NULL)
+                    put("media_type", JSONObject.NULL)
                 }
+
                 if (price != null) {
                     put("price", price)
                     put("currency", currency)
@@ -454,6 +492,15 @@ object GroupsApiService {
                     if (applicationValue != null) put("application_value", applicationValue)
                     if (expiryDate != null) put("expiry_date", expiryDate)
                 }
+                if (street != null) put("street", street)
+                if (district != null) put("district", district)
+                if (region != null) put("region", region)
+                if (country != null) put("country", country)
+                if (location != null && !has("location")) put("location", location)
+                if (artist != null) put("artist", artist)
+                if (series != null) put("series", series)
+                if (episode != null) put("episode", episode)
+                if (duration != null) put("duration", duration)
             }
 
             OutputStreamWriter(conn.outputStream).use { it.write(payload.toString()) }
@@ -461,7 +508,7 @@ object GroupsApiService {
             if (conn.responseCode in 200..299) {
                 val responseText = BufferedReader(InputStreamReader(conn.inputStream)).use { it.readText() }.trim()
                 val root = JSONObject(responseText)
-                val postObj = root.optJSONObject("post") ?: root
+                val postObj = root.optJSONObject("post") ?: root.optJSONObject("data") ?: root
                 return@withContext parseGroupPostJson(postObj, userId)
             }
             conn.disconnect()

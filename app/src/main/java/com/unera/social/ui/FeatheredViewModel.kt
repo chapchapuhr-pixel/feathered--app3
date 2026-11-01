@@ -3206,6 +3206,7 @@ class FeatheredViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     fun postToGroup(
+        context: Context?,
         groupId: Long,
         content: String,
         imageUrls: List<String> = emptyList(),
@@ -3225,40 +3226,108 @@ class FeatheredViewModel(application: Application) : AndroidViewModel(applicatio
             openAuth("login")
             return
         }
-        viewModelScope.launch {
-            val createdPost = GroupsApiService.createGroupPost(
-                groupId = groupId,
-                userId = _uiState.value.currentUser.id,
-                content = content,
-                mediaUrls = imageUrls,
-                price = price,
-                currency = currency,
-                condition = condition,
-                location = location,
-                status = status,
-                jobTitle = jobTitle,
-                company = company,
-                jobType = jobType,
-                salary = salary,
-                applicationType = applicationType,
-                applicationValue = applicationValue
+
+        val meId = _uiState.value.currentUser.id
+        val targetGroup = _uiState.value.groups.find { it.id == groupId }
+        val groupName = targetGroup?.name?.let { "\"$it\"" } ?: "group"
+        val previewUrl = imageUrls.firstOrNull()
+
+        // 1. Initial State: 15% - "Posting to <groupName>…"
+        _uiState.update { state ->
+            state.copy(
+                postUploadState = PostUploadState(
+                    isUploading = true,
+                    progress = 15f,
+                    title = "Posting to $groupName…",
+                    secondaryStatus = if (imageUrls.isNotEmpty()) {
+                        if (imageUrls.size > 1) "Optimizing ${imageUrls.size} photos..." else "Preparing media attachment..."
+                    } else {
+                        "Publishing post to group..."
+                    },
+                    previewUrl = previewUrl,
+                    isSuccess = false
+                )
             )
-            if (createdPost != null) {
-                _uiState.update { state ->
-                    state.copy(groupPosts = listOf(createdPost) + state.groupPosts)
+        }
+
+        viewModelScope.launch {
+            try {
+                val finalMediaUrls = mutableListOf<String>()
+                val finalMediaTypes = mutableListOf<String>()
+                val finalMediaMeta = mutableListOf<Map<String, String>>()
+
+                if (imageUrls.isNotEmpty()) {
+                    var completedFiles = 0
+                    for (item in imageUrls) {
+                        if (item.contains("video", ignoreCase = true) || item.endsWith(".mp4", ignoreCase = true) || item.endsWith(".mov", ignoreCase = true)) {
+                            throw IllegalStateException("Video uploads are disabled in groups. Only photos can be posted.")
+                        }
+
+                        val targetContext = context ?: getApplication<Application>().applicationContext
+                        if (item.startsWith("content://") || item.startsWith("file://")) {
+                            val uri = Uri.parse(item)
+                            val bundleResult = MediaUploadHelper.buildImageBundleAndUpload(targetContext, uri)
+                            if (bundleResult == null || bundleResult.feedUrl.isBlank()) {
+                                throw IllegalStateException("Failed to upload photo to group")
+                            }
+                            val feed = bundleResult.feedUrl
+                            val thumb = bundleResult.thumbUrl.ifBlank { feed }
+                            finalMediaUrls.add(feed)
+                            finalMediaTypes.add("image")
+                            finalMediaMeta.add(
+                                mapOf(
+                                    "thumb" to thumb,
+                                    "feed" to feed,
+                                    "full" to feed, // group only compress to feed image
+                                    "type" to "image"
+                                )
+                            )
+                        } else if (item.startsWith("http://") || item.startsWith("https://")) {
+                            finalMediaUrls.add(item)
+                            finalMediaTypes.add("image")
+                            finalMediaMeta.add(
+                                mapOf(
+                                    "thumb" to item,
+                                    "feed" to item,
+                                    "full" to item,
+                                    "type" to "image"
+                                )
+                            )
+                        }
+
+                        completedFiles++
+                        val pct = Math.min(85f, 20f + ((completedFiles.toFloat() / imageUrls.size) * 65f))
+                        _uiState.update { state ->
+                            state.copy(
+                                postUploadState = state.postUploadState?.copy(
+                                    progress = pct,
+                                    secondaryStatus = if (imageUrls.size > 1) {
+                                        "Uploaded photo $completedFiles of ${imageUrls.size}..."
+                                    } else {
+                                        "Photo uploaded. Publishing post..."
+                                    }
+                                )
+                            )
+                        }
+                    }
                 }
-            } else {
-                val newPost = GroupPost(
-                    id = System.currentTimeMillis(),
+
+                _uiState.update { state ->
+                    state.copy(
+                        postUploadState = state.postUploadState?.copy(
+                            progress = 90f,
+                            secondaryStatus = "Publishing post to group..."
+                        )
+                    )
+                }
+
+                val createdPost = GroupsApiService.createGroupPost(
                     groupId = groupId,
-                    author = _uiState.value.currentUser,
+                    userId = meId,
                     content = content,
-                    imageUrls = imageUrls,
-                    createdAt = "Just now",
-                    likesCount = 0,
-                    commentsCount = 0,
-                    sharesCount = 0,
-                    isLiked = false,
+                    mediaUrls = finalMediaUrls,
+                    mediaTypes = finalMediaTypes,
+                    mediaMeta = finalMediaMeta,
                     price = price,
                     currency = currency,
                     condition = condition,
@@ -3271,11 +3340,113 @@ class FeatheredViewModel(application: Application) : AndroidViewModel(applicatio
                     applicationType = applicationType,
                     applicationValue = applicationValue
                 )
-                _uiState.update { state ->
-                    state.copy(groupPosts = listOf(newPost) + state.groupPosts)
+
+                if (createdPost != null) {
+                    _uiState.update { state ->
+                        state.copy(
+                            groupPosts = listOf(createdPost) + state.groupPosts,
+                            postUploadState = state.postUploadState?.copy(
+                                isUploading = false,
+                                isSuccess = true,
+                                progress = 100f,
+                                title = "Group post published!",
+                                secondaryStatus = "Your post is now visible in the group."
+                            )
+                        )
+                    }
+                } else {
+                    val newPost = GroupPost(
+                        id = System.currentTimeMillis(),
+                        groupId = groupId,
+                        author = _uiState.value.currentUser,
+                        content = content,
+                        imageUrls = finalMediaUrls,
+                        createdAt = "Just now",
+                        likesCount = 0,
+                        commentsCount = 0,
+                        sharesCount = 0,
+                        isLiked = false,
+                        price = price,
+                        currency = currency,
+                        condition = condition,
+                        location = location,
+                        status = status,
+                        jobTitle = jobTitle,
+                        company = company,
+                        jobType = jobType,
+                        salary = salary,
+                        applicationType = applicationType,
+                        applicationValue = applicationValue
+                    )
+                    _uiState.update { state ->
+                        state.copy(
+                            groupPosts = listOf(newPost) + state.groupPosts,
+                            postUploadState = state.postUploadState?.copy(
+                                isUploading = false,
+                                isSuccess = true,
+                                progress = 100f,
+                                title = "Group post published!",
+                                secondaryStatus = "Your post is now visible in the group."
+                            )
+                        )
+                    }
                 }
+
+                delay(2800)
+                _uiState.update { it.copy(postUploadState = null) }
+            } catch (e: Exception) {
+                e.printStackTrace()
+                val errorMsg = e.message ?: "Could not publish group post."
+                _uiState.update { state ->
+                    state.copy(
+                        postUploadState = state.postUploadState?.copy(
+                            isUploading = false,
+                            isSuccess = false,
+                            progress = 0f,
+                            title = "Upload failed",
+                            secondaryStatus = errorMsg
+                        )
+                    )
+                }
+                delay(4000)
+                _uiState.update { it.copy(postUploadState = null) }
             }
         }
+    }
+
+    fun postToGroup(
+        groupId: Long,
+        content: String,
+        imageUrls: List<String> = emptyList(),
+        price: Double? = null,
+        currency: String = "USD",
+        condition: String? = null,
+        location: String? = null,
+        status: String = "available",
+        jobTitle: String? = null,
+        company: String? = null,
+        jobType: String? = null,
+        salary: String? = null,
+        applicationType: String? = null,
+        applicationValue: String? = null
+    ) {
+        postToGroup(
+            context = getApplication<Application>().applicationContext,
+            groupId = groupId,
+            content = content,
+            imageUrls = imageUrls,
+            price = price,
+            currency = currency,
+            condition = condition,
+            location = location,
+            status = status,
+            jobTitle = jobTitle,
+            company = company,
+            jobType = jobType,
+            salary = salary,
+            applicationType = applicationType,
+            applicationValue = applicationValue
+        )
     }
 
     fun toggleLikeGroupPost(postId: Long, reaction: String = "like") {

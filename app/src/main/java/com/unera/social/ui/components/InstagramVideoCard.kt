@@ -1008,38 +1008,19 @@ fun InstagramVideoCard(
                     }
                 }
 
-                // 2. Discuss Button (Matching Web: far fa-comment 22px #F8FAFC)
-                Row(
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(8.dp))
-                        .clickable {
-                            if (isGuest) {
-                                onRequestAuth?.invoke()
-                                return@clickable
-                            }
-                            if (onOpenComments != null) onOpenComments(activePost)
-                            else showDiscussModal = true
+                // 2. Discuss Button (Exact Web: far fa-comment 22px #F8FAFC, hover #38BDF8)
+                DiscussButton(
+                    commentCount = localCommentCount,
+                    onClick = {
+                        if (isGuest) {
+                            onRequestAuth?.invoke()
+                            return@DiscussButton
                         }
-                        .padding(horizontal = 4.dp, vertical = 4.dp)
-                        .testTag("discuss_reel_btn_$activePostId"),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Icon(
-                        imageVector = Icons.Outlined.ChatBubbleOutline,
-                        contentDescription = "Discuss",
-                        tint = Color(0xFFF8FAFC),
-                        modifier = Modifier.size(22.dp)
-                    )
-                    if (localCommentCount > 0) {
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text(
-                            text = formatCount(localCommentCount),
-                            color = Color(0xFFF8FAFC),
-                            fontSize = 14.sp,
-                            fontWeight = FontWeight.SemiBold
-                        )
-                    }
-                }
+                        if (onOpenComments != null) onOpenComments(activePost)
+                        else showDiscussModal = true
+                    },
+                    testTag = "discuss_reel_btn_$activePostId"
+                )
 
                 // 3. Share Button (Facing Northeast: ↗, Send icon rotated -35deg)
                 Row(

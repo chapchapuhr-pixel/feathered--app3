@@ -35,6 +35,7 @@ import com.unera.social.ui.components.ScrollRestorationController
 import com.unera.social.ui.components.ImageViewer
 import com.unera.social.ui.components.ProfessionalLoader
 import com.unera.social.ui.components.Spinner
+import com.unera.social.ui.components.DiscussionsSheetDialog
 import com.unera.social.ui.screens.*
 import com.unera.social.ui.theme.FeatheredTheme
 import kotlinx.coroutines.launch
@@ -724,15 +725,30 @@ fun FeatheredApp(
     }
 
     if (uiState.selectedPostForComments != null) {
-        CommentsDialog(
-            post = uiState.selectedPostForComments!!,
+        val selectedPost = uiState.selectedPostForComments!!
+        DiscussionsSheetDialog(
+            post = selectedPost,
             currentUser = uiState.currentUser,
             onDismiss = { viewModel.setSelectedPostForComments(null) },
             onAddComment = { commentText ->
-                viewModel.addComment(uiState.selectedPostForComments!!.id, commentText)
+                viewModel.addComment(selectedPost.id, commentText)
             },
+            onLikeComment = { _ -> },
             onDeleteComment = { commentId ->
-                viewModel.deleteComment(uiState.selectedPostForComments!!.id, commentId)
+                viewModel.deleteComment(selectedPost.id, commentId)
+            },
+            onProfileClick = { author ->
+                viewModel.setSelectedPostForComments(null)
+                viewModel.openUserProfile(author)
+            },
+            onLikePost = {
+                viewModel.toggleLikePost(selectedPost.id)
+            },
+            onSharePost = {
+                viewModel.sharePost(selectedPost.id)
+            },
+            onSavePost = {
+                viewModel.toggleSavePost(selectedPost.id)
             }
         )
     }

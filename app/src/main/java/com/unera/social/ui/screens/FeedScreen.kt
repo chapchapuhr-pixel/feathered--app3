@@ -590,7 +590,26 @@ fun FeedScreen(
                 onProfileClick = { author ->
                     discussionsSheetPost = null
                     onUserClick(author)
-                }
+                },
+                onLikePost = {
+                    if (isGuest) onRequestAuth() else onLikePost?.invoke(livePost.id)
+                },
+                onReactPost = { type ->
+                    if (isGuest) onRequestAuth() else onReactPost?.invoke(livePost.id, type)
+                },
+                onSharePost = {
+                    if (isGuest) onRequestAuth() else onSharePost?.invoke(livePost.id)
+                },
+                onSavePost = {
+                    if (isGuest) onRequestAuth() else onSavePost?.invoke(livePost.id)
+                },
+                onOpenGallery = { _, _ ->
+                    activePostForGallery = livePost
+                },
+                onOpenProduct = { onOpenProduct?.invoke(it) },
+                onOpenEvent = { onOpenEvent?.invoke(it) },
+                onOpenGroup = { onOpenGroup?.invoke(it) },
+                onPlayMusic = { onPlayMusic?.invoke(it) }
             )
         }
 
@@ -946,25 +965,26 @@ fun StoriesSection(
 fun WebPostCard(
     post: Post,
     currentUser: User,
-    isFollowing: Boolean,
-    onFollowToggle: () -> Unit,
-    onLike: () -> Unit,
-    onReact: (String) -> Unit,
-    onComment: () -> Unit,
-    onShare: () -> Unit,
-    onSave: () -> Unit,
-    onUserClick: () -> Unit,
-    onOpenGallery: (List<String>, Int) -> Unit,
-    onOpenReactions: () -> Unit,
-    onOpenProduct: (Product) -> Unit,
-    onOpenEvent: (Event) -> Unit,
-    onOpenGroup: (Long) -> Unit,
-    onPlayMusic: (Song) -> Unit,
+    isFollowing: Boolean = false,
+    onFollowToggle: () -> Unit = {},
+    onLike: () -> Unit = {},
+    onReact: (String) -> Unit = {},
+    onComment: () -> Unit = {},
+    onShare: () -> Unit = {},
+    onSave: () -> Unit = {},
+    onUserClick: () -> Unit = {},
+    onOpenGallery: (List<String>, Int) -> Unit = { _, _ -> },
+    onOpenReactions: () -> Unit = {},
+    onOpenProduct: (Product) -> Unit = {},
+    onOpenEvent: (Event) -> Unit = {},
+    onOpenGroup: (Long) -> Unit = {},
+    onPlayMusic: (Song) -> Unit = {},
     onStoryClick: ((Story) -> Unit)? = null,
     onDeletePost: (Long) -> Unit = {},
     onEditPost: (Long, String) -> Unit = { _, _ -> },
     onHidePost: (Long) -> Unit = {},
     onReportPost: ((Long, String) -> Unit)? = null,
+    hideCommentPreview: Boolean = false,
     modifier: Modifier = Modifier
 ) {
     var showReactionDock by remember { mutableStateOf(false) }
@@ -1556,31 +1576,12 @@ fun WebPostCard(
                         }
                     }
 
-                    // Discuss Button (Matching Web: far fa-comment 22px #F8FAFC)
-                    Row(
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(8.dp))
-                            .clickable(onClick = onComment)
-                            .padding(horizontal = 4.dp, vertical = 4.dp)
-                            .testTag("comment_post_btn_${post.id}"),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Icon(
-                            imageVector = Icons.Outlined.ChatBubbleOutline,
-                            contentDescription = "Discuss",
-                            tint = Color(0xFFF8FAFC),
-                            modifier = Modifier.size(22.dp)
-                        )
-                        if (post.commentsCount > 0) {
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text(
-                                text = formatCount(post.commentsCount),
-                                color = Color(0xFFF8FAFC),
-                                fontSize = 14.sp,
-                                fontWeight = FontWeight.SemiBold
-                            )
-                        }
-                    }
+                    // Discuss Button (Exact Web: far fa-comment 22px #F8FAFC, hover #38BDF8)
+                    DiscussButton(
+                        commentCount = post.commentsCount,
+                        onClick = onComment,
+                        testTag = "comment_post_btn_${post.id}"
+                    )
 
                     // Share Button (Facing Northeast: ↗, Send icon rotated -35deg)
                     Row(
@@ -1621,7 +1622,7 @@ fun WebPostCard(
             }
 
             // Inline Single Comment Preview (Matching Facebook / Web style)
-            if (post.comments.isNotEmpty()) {
+            if (!hideCommentPreview && post.comments.isNotEmpty()) {
                 val previewComment = post.comments.first()
                 HorizontalDivider(color = Color(0xFF1E293B).copy(alpha = 0.5f), thickness = 1.dp)
 
