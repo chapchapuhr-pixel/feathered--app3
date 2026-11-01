@@ -15,6 +15,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -59,6 +60,7 @@ fun FeatheredApp(
     val uiState by viewModel.uiState.collectAsState()
     val scrollRestorationController = remember { ScrollRestorationController() }
     val coroutineScope = rememberCoroutineScope()
+    val context = LocalContext.current
 
     ProvideScrollRestoration(controller = scrollRestorationController) {
         ScrollRestoration(
@@ -596,7 +598,7 @@ fun FeatheredApp(
                         },
                         onPostToGroup = { gid, content, images, price, curr, cond, loc, stat, job, comp, jType, sal, appType, appVal ->
                             if (uiState.isGuest) viewModel.openAuth("login")
-                            else viewModel.postToGroup(gid, content, images, price, curr, cond, loc, stat, job, comp, jType, sal, appType, appVal)
+                            else viewModel.postToGroup(context, gid, content, images, price, curr, cond, loc, stat, job, comp, jType, sal, appType, appVal)
                         },
                         onToggleLikePost = { pid, r ->
                             if (uiState.isGuest) viewModel.openAuth("login")
@@ -620,6 +622,8 @@ fun FeatheredApp(
                         onProfileClick = { userId ->
                             viewModel.openUserProfileById(userId)
                         },
+                        uploadState = uiState.postUploadState,
+                        onDismissUpload = { viewModel.dismissPostUpload() },
                         modifier = screenModifier
                     )
                 }

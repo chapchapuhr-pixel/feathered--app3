@@ -44,6 +44,55 @@ import com.unera.social.ui.components.PostUploadBottomPill
 import com.unera.social.ui.components.PostUploadState
 import coil.compose.AsyncImage
 import com.unera.social.model.*
+import android.content.Intent
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.material.icons.outlined.BookmarkBorder
+import androidx.compose.material.icons.outlined.ChatBubbleOutline
+import androidx.compose.material.icons.outlined.FavoriteBorder
+import androidx.compose.material.icons.automirrored.filled.Send
+import com.unera.social.ui.components.DiscussionsSheetDialog
+import com.unera.social.ui.components.GalleryViewerDialog
+import com.unera.social.ui.components.ShareBottomSheetDialog
+import com.unera.social.ui.components.ReactionsSheetDialog
+import com.unera.social.ui.components.DiscussButton
+import com.unera.social.ui.components.REACTION_EMOJIS
+import com.unera.social.ui.components.getReactionEmoji
+
+fun isCareerCategory(category: String?, name: String? = null): Boolean {
+    val c = category?.lowercase() ?: ""
+    val n = name?.lowercase() ?: ""
+    return c == "recruitment" || c == "career" || c == "careers" || c == "job" || c == "jobs" ||
+            n.contains("career") || n.contains("job") || n.contains("recruitment") || n.contains("hiring") || n.contains("employment")
+}
+
+fun GroupPost.toPost(group: Group? = null): Post {
+    return Post(
+        id = id,
+        author = author,
+        content = content,
+        mediaUrl = imageUrls.firstOrNull(),
+        mediaUrls = imageUrls,
+        timestamp = createdAt,
+        likesCount = likesCount,
+        commentsCount = commentsCount,
+        sharesCount = sharesCount,
+        isLiked = isLiked,
+        myReaction = myReaction,
+        groupId = groupId,
+        groupName = group?.name,
+        groupImageUrl = group?.profileImageUrl,
+        jobTitle = jobTitle,
+        company = company,
+        jobType = jobType,
+        salary = salary,
+        applicationValue = applicationValue,
+        comments = comments,
+        postType = "group_post",
+        createdAt = createdAt
+    )
+}
 
 enum class GroupsTab(val label: String) {
     YOUR_GROUPS("Your groups"),
@@ -712,13 +761,21 @@ fun GroupDetailScreen(
     onSetMemberRole: (Long, String) -> Unit,
     onRemoveMember: (Long) -> Unit,
     onProfileClick: (Long) -> Unit,
+    uploadState: PostUploadState? = null,
+    onDismissUpload: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     var selectedTab by remember { mutableStateOf(GroupDetailTab.DISCUSSION) }
     var showCreatePostModal by remember { mutableStateOf(false) }
+    var autoLaunchPhotoPicker by remember { mutableStateOf(false) }
     var showInviteModal by remember { mutableStateOf(false) }
     var showSettingsModal by remember { mutableStateOf(false) }
     var showShareModal by remember { mutableStateOf(false) }
+    var activeDiscussionPost by remember { mutableStateOf<Post?>(null) }
+    var activeReactionsPost by remember { mutableStateOf<Post?>(null) }
+    var activeSharePost by remember { mutableStateOf<Post?>(null) }
+    var activeGalleryState by remember { mutableStateOf<Pair<List<String>, Int>?>(null) }
+    var activePostForGallery by remember { mutableStateOf<Post?>(null) }
     val context = LocalContext.current
 
     val isOwner = group.adminId == currentUser.id
@@ -731,11 +788,14 @@ fun GroupDetailScreen(
         else -> Color(0xFF1877F2)
     }
 
-    LazyColumn(
+    Box(
         modifier = modifier
             .fillMaxSize()
             .background(Color(0xFF050B18))
     ) {
+        LazyColumn(
+            modifier = Modifier.fillMaxSize()
+        ) {
         // Cover and Back Header
         item {
             Box(
@@ -917,38 +977,120 @@ fun GroupDetailScreen(
                         Card(
                             colors = CardDefaults.cardColors(containerColor = Color(0xFF0F172A)),
                             shape = RoundedCornerShape(16.dp),
-                            border = CardDefaults.outlinedCardBorder(),
+                            border = BorderStroke(1.dp, Color(0xFF1E293B)),
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(16.dp)
-                                .clickable { showCreatePostModal = true }
+                                .padding(horizontal = 14.dp, vertical = 8.dp)
                         ) {
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(14.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                AsyncImage(
-                                    model = currentUser.profileImageUrl,
-                                    contentDescription = null,
+                            Column(modifier = Modifier.padding(14.dp)) {
+                                Row(
                                     modifier = Modifier
-                                        .size(42.dp)
-                                        .clip(CircleShape),
-                                    contentScale = ContentScale.Crop
-                                )
-                                Spacer(modifier = Modifier.width(12.dp))
-                                Text(
-                                    text = when (group.category) {
-                                        "buy_sell" -> "Sell something in ${group.name}..."
-                                        "recruitment" -> "Post a job opening in ${group.name}..."
-                                        else -> "Write something to ${group.name}..."
-                                    },
-                                    color = Color(0xFF94A3B8),
-                                    fontSize = 15.sp,
-                                    modifier = Modifier.weight(1f)
-                                )
-                                Icon(Icons.Default.Edit, contentDescription = null, tint = Color(0xFF64748B))
+                                        .fillMaxWidth()
+                                        .clip(RoundedCornerShape(24.dp))
+                                        .background(Color(0xFF162137))
+                                        .clickable {
+                                            autoLaunchPhotoPicker = false
+                                            showCreatePostModal = true
+                                        }
+                                        .padding(horizontal = 12.dp, vertical = 10.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    AsyncImage(
+                                        model = currentUser.profileImageUrl.ifBlank { "https://ui-avatars.com/api/?name=${currentUser.name}" },
+                                        contentDescription = null,
+                                        modifier = Modifier
+                                            .size(38.dp)
+                                            .clip(CircleShape),
+                                        contentScale = ContentScale.Crop
+                                    )
+                                    Spacer(modifier = Modifier.width(12.dp))
+                                    Text(
+                                        text = when {
+                                            group.category == "buy_sell" -> "Sell something in ${group.name}..."
+                                            isCareerCategory(group.category, group.name) -> "Post a job opportunity in ${group.name}..."
+                                            else -> "Write something to ${group.name}..."
+                                        },
+                                        color = Color(0xFF94A3B8),
+                                        fontSize = 15.sp,
+                                        modifier = Modifier.weight(1f),
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                    Icon(Icons.Default.Edit, contentDescription = null, tint = Color(0xFF64748B), modifier = Modifier.size(18.dp))
+                                }
+
+                                Spacer(modifier = Modifier.height(10.dp))
+                                HorizontalDivider(color = Color(0xFF1E293B))
+                                Spacer(modifier = Modifier.height(6.dp))
+
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceAround,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    // Photo / Video action
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        modifier = Modifier
+                                            .clip(RoundedCornerShape(8.dp))
+                                            .clickable {
+                                                autoLaunchPhotoPicker = true
+                                                showCreatePostModal = true
+                                            }
+                                            .padding(horizontal = 8.dp, vertical = 6.dp)
+                                    ) {
+                                        Icon(Icons.Default.AddPhotoAlternate, contentDescription = "Photo/Video", tint = Color(0xFF45BD62), modifier = Modifier.size(20.dp))
+                                        Spacer(modifier = Modifier.width(6.dp))
+                                        Text("Photo/Video", color = Color(0xFFCBD5E1), fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                                    }
+
+                                    // Event action
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        modifier = Modifier
+                                            .clip(RoundedCornerShape(8.dp))
+                                            .clickable {
+                                                selectedTab = GroupDetailTab.EVENTS
+                                            }
+                                            .padding(horizontal = 8.dp, vertical = 6.dp)
+                                    ) {
+                                        Icon(Icons.Default.Event, contentDescription = "Event", tint = Color(0xFF1877F2), modifier = Modifier.size(20.dp))
+                                        Spacer(modifier = Modifier.width(6.dp))
+                                        Text("Event", color = Color(0xFFCBD5E1), fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                                    }
+
+                                    if (group.category == "buy_sell") {
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            modifier = Modifier
+                                                .clip(RoundedCornerShape(8.dp))
+                                                .clickable {
+                                                    autoLaunchPhotoPicker = false
+                                                    showCreatePostModal = true
+                                                }
+                                                .padding(horizontal = 8.dp, vertical = 6.dp)
+                                        ) {
+                                            Icon(Icons.Default.Storefront, contentDescription = "Sell Item", tint = Color(0xFFF7B928), modifier = Modifier.size(20.dp))
+                                            Spacer(modifier = Modifier.width(6.dp))
+                                            Text("Sell Item", color = Color(0xFFCBD5E1), fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                                        }
+                                    } else if (isCareerCategory(group.category, group.name)) {
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            modifier = Modifier
+                                                .clip(RoundedCornerShape(8.dp))
+                                                .clickable {
+                                                    autoLaunchPhotoPicker = false
+                                                    showCreatePostModal = true
+                                                }
+                                                .padding(horizontal = 8.dp, vertical = 6.dp)
+                                        ) {
+                                            Icon(Icons.Default.Work, contentDescription = "Post Job", tint = Color(0xFF45BD62), modifier = Modifier.size(20.dp))
+                                            Spacer(modifier = Modifier.width(6.dp))
+                                            Text("Post Job", color = Color(0xFFCBD5E1), fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                                        }
+                                    }
+                                }
                             }
                         }
                     }
@@ -960,10 +1102,25 @@ fun GroupDetailScreen(
                         group = group,
                         currentUser = currentUser,
                         onLike = { onToggleLikePost(post.id, "like") },
-                        onComment = { text -> onAddPostComment(post.id, text) },
-                        onShare = { onSharePost(post.id) },
+                        onReact = { reaction -> onToggleLikePost(post.id, reaction) },
+                        onComment = {
+                            activeDiscussionPost = post.toPost(group)
+                        },
+                        onShare = {
+                            activeSharePost = post.toPost(group)
+                        },
+                        onSave = {
+                            Toast.makeText(context, "Post saved to your bookmarks", Toast.LENGTH_SHORT).show()
+                        },
                         onDelete = if (isOwner || post.author.id == currentUser.id) { { onDeletePost(post.id) } } else null,
-                        onProfileClick = onProfileClick
+                        onProfileClick = onProfileClick,
+                        onOpenGallery = { imgs, idx ->
+                            activePostForGallery = post.toPost(group)
+                            activeGalleryState = Pair(imgs, idx)
+                        },
+                        onOpenReactions = {
+                            activeReactionsPost = post.toPost(group)
+                        }
                     )
                 }
 
@@ -1210,15 +1367,35 @@ fun GroupDetailScreen(
         }
     }
 
+    if (uploadState != null) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(bottom = 16.dp),
+            contentAlignment = Alignment.BottomCenter
+        ) {
+            PostUploadBottomPill(
+                uploadState = uploadState,
+                onDismiss = onDismissUpload
+            )
+        }
+    }
+}
+
     // Create Post Modal in Group
     if (showCreatePostModal) {
         CreateGroupPostDialog(
             group = group,
             currentUser = currentUser,
-            onDismiss = { showCreatePostModal = false },
+            autoPickPhotos = autoLaunchPhotoPicker,
+            onDismiss = {
+                showCreatePostModal = false
+                autoLaunchPhotoPicker = false
+            },
             onSubmit = { content, images, price, curr, cond, loc, stat, job, comp, jType, sal, appType, appVal ->
                 onPost(content, images, price, curr, cond, loc, stat, job, comp, jType, sal, appType, appVal)
                 showCreatePostModal = false
+                autoLaunchPhotoPicker = false
             }
         )
     }
@@ -1266,6 +1443,220 @@ fun GroupDetailScreen(
             }
         )
     }
+
+    // Discussions Modal (Full Comments Sheet matching web)
+    activeDiscussionPost?.let { curPost ->
+        DiscussionsSheetDialog(
+            post = curPost,
+            currentUser = currentUser,
+            onDismiss = { activeDiscussionPost = null },
+            onAddComment = { commentText ->
+                onAddPostComment(curPost.id, commentText)
+            },
+            onLikeComment = { _ -> },
+            onProfileClick = { user ->
+                activeDiscussionPost = null
+                onProfileClick(user.id)
+            },
+            onLikePost = {
+                onToggleLikePost(curPost.id, "like")
+            },
+            onReactPost = { rType ->
+                onToggleLikePost(curPost.id, rType)
+            },
+            onSharePost = {
+                activeDiscussionPost = null
+                activeSharePost = curPost
+            },
+            onSavePost = { },
+            onOpenGallery = { imgs, idx ->
+                activePostForGallery = curPost
+                activeGalleryState = Pair(imgs, idx)
+            }
+        )
+    }
+
+    // Reactions Sheet Modal
+    activeReactionsPost?.let { curPost ->
+        ReactionsSheetDialog(
+            post = curPost,
+            allUsers = allUsers,
+            onDismiss = { activeReactionsPost = null },
+            onUserClick = { user ->
+                activeReactionsPost = null
+                onProfileClick(user.id)
+            }
+        )
+    }
+
+    // Share Modal
+    activeSharePost?.let { curPost ->
+        ShareBottomSheetDialog(
+            post = curPost,
+            onDismiss = { activeSharePost = null },
+            onShareToFeed = {
+                onSharePost(curPost.id)
+                Toast.makeText(context, "Shared to feed!", Toast.LENGTH_SHORT).show()
+                activeSharePost = null
+            },
+            onShareToGroup = {
+                onSharePost(curPost.id)
+                Toast.makeText(context, "Shared to group!", Toast.LENGTH_SHORT).show()
+                activeSharePost = null
+            },
+            onSendMessage = {
+                Toast.makeText(context, "Share link ready to send", Toast.LENGTH_SHORT).show()
+                activeSharePost = null
+            },
+            onCopyLink = {
+                val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                val clip = ClipData.newPlainText("Post Link", "https://unera.social/posts/${curPost.id}")
+                clipboard.setPrimaryClip(clip)
+                Toast.makeText(context, "Post link copied to clipboard!", Toast.LENGTH_SHORT).show()
+                activeSharePost = null
+            }
+        )
+    }
+
+    // Fullscreen Gallery Modal
+    activeGalleryState?.let { (imgs, idx) ->
+        activePostForGallery?.let { curPost ->
+            GalleryViewerDialog(
+                images = imgs,
+                initialIndex = idx,
+                post = curPost,
+                onDismiss = {
+                    activeGalleryState = null
+                    activePostForGallery = null
+                },
+                onLike = { onToggleLikePost(curPost.id, "like") },
+                onComment = {
+                    activeGalleryState = null
+                    activeDiscussionPost = curPost
+                },
+                onShare = {
+                    activeGalleryState = null
+                    activeSharePost = curPost
+                },
+                onSave = { }
+            )
+        }
+    }
+}
+
+@Composable
+fun GroupMediaGrid(
+    images: List<String>,
+    onImageClick: (Int) -> Unit
+) {
+    when (images.size) {
+        1 -> {
+            AsyncImage(
+                model = images[0],
+                contentDescription = null,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(260.dp)
+                    .clip(RoundedCornerShape(10.dp))
+                    .clickable { onImageClick(0) }
+            )
+        }
+        2 -> {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(200.dp),
+                horizontalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                AsyncImage(
+                    model = images[0],
+                    contentDescription = null,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxHeight()
+                        .clip(RoundedCornerShape(topStart = 10.dp, bottomStart = 10.dp))
+                        .clickable { onImageClick(0) }
+                )
+                AsyncImage(
+                    model = images[1],
+                    contentDescription = null,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxHeight()
+                        .clip(RoundedCornerShape(topEnd = 10.dp, bottomEnd = 10.dp))
+                        .clickable { onImageClick(1) }
+                )
+            }
+        }
+        else -> {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(220.dp),
+                horizontalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                AsyncImage(
+                    model = images[0],
+                    contentDescription = null,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier
+                        .weight(1.2f)
+                        .fillMaxHeight()
+                        .clip(RoundedCornerShape(topStart = 10.dp, bottomStart = 10.dp))
+                        .clickable { onImageClick(0) }
+                )
+                Column(
+                    modifier = Modifier
+                        .weight(0.8f)
+                        .fillMaxHeight(),
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    AsyncImage(
+                        model = images[1],
+                        contentDescription = null,
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(topEnd = 10.dp))
+                            .clickable { onImageClick(1) }
+                    )
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(bottomEnd = 10.dp))
+                            .clickable { onImageClick(2) }
+                    ) {
+                        AsyncImage(
+                            model = images[2],
+                            contentDescription = null,
+                            contentScale = ContentScale.Crop,
+                            modifier = Modifier.fillMaxSize()
+                        )
+                        if (images.size > 3) {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .background(Color.Black.copy(alpha = 0.55f)),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    text = "+${images.size - 2}",
+                                    color = Color.White,
+                                    fontSize = 20.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
 
 @Composable
@@ -1274,245 +1665,538 @@ fun GroupPostCard(
     group: Group,
     currentUser: User,
     onLike: () -> Unit,
-    onComment: (String) -> Unit,
+    onReact: (String) -> Unit = {},
+    onComment: () -> Unit,
     onShare: () -> Unit,
+    onSave: () -> Unit = {},
     onDelete: (() -> Unit)? = null,
-    onProfileClick: (Long) -> Unit
+    onProfileClick: (Long) -> Unit,
+    onOpenGallery: (List<String>, Int) -> Unit = { _, _ -> },
+    onOpenReactions: () -> Unit = {},
+    modifier: Modifier = Modifier
 ) {
-    var showCommentInput by remember { mutableStateOf(false) }
-    var commentText by remember { mutableStateOf("") }
+    var showReactionDock by remember { mutableStateOf(false) }
+    var isExpandedText by remember { mutableStateOf(false) }
+    var showMoreMenu by remember { mutableStateOf(false) }
     val context = LocalContext.current
+
+    val isCareer = group.category == "recruitment" ||
+        isCareerCategory(group.category, group.name) ||
+        !post.jobTitle.isNullOrBlank()
+    val isBuySell = group.category == "buy_sell" || post.price != null
+
+    val hasApplicationMethod = !post.applicationValue.isNullOrBlank() &&
+        (post.applicationType == "email" || post.applicationType == "link" ||
+         post.applicationValue.contains("@") || post.applicationValue.startsWith("http"))
 
     Card(
         colors = CardDefaults.cardColors(containerColor = Color(0xFF0F172A)),
-        shape = RoundedCornerShape(16.dp),
-        border = CardDefaults.outlinedCardBorder(),
-        modifier = Modifier
+        shape = RoundedCornerShape(14.dp),
+        border = BorderStroke(1.dp, Color(0xFF1E293B)),
+        modifier = modifier
             .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 6.dp)
+            .padding(horizontal = 14.dp, vertical = 6.dp)
     ) {
-        Column(modifier = Modifier.padding(14.dp)) {
-            // Author Row
+        Column(modifier = Modifier.fillMaxWidth()) {
+            // Header Row: Author Avatar, Name, Verified Badge, Category, More Menu
             Row(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 14.dp, vertical = 12.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 AsyncImage(
-                    model = post.author.profileImageUrl,
-                    contentDescription = null,
+                    model = post.author.profileImageUrl.ifBlank { "https://ui-avatars.com/api/?name=${post.author.name}" },
+                    contentDescription = post.author.name,
                     modifier = Modifier
                         .size(42.dp)
                         .clip(CircleShape)
+                        .border(1.dp, Color(0xFF1E293B), CircleShape)
                         .clickable { onProfileClick(post.author.id) },
                     contentScale = ContentScale.Crop
                 )
                 Spacer(modifier = Modifier.width(10.dp))
                 Column(modifier = Modifier.weight(1f)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(post.author.name, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.clickable { onProfileClick(post.author.id) }
+                    ) {
+                        Text(
+                            text = post.author.name,
+                            color = Color(0xFFF8FAFC),
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 17.sp,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
                         if (post.author.isVerified) {
                             Spacer(modifier = Modifier.width(4.dp))
-                            VerifiedBadge(size = 14.dp)
+                            VerifiedBadge(size = 15.dp)
                         }
                     }
-                    Text(post.createdAt, color = Color(0xFF94A3B8), fontSize = 12.sp)
-                }
-
-                if (onDelete != null) {
-                    IconButton(onClick = onDelete) {
-                        Icon(Icons.Default.DeleteOutline, contentDescription = "Delete", tint = Color(0xFF94A3B8))
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        Text(post.createdAt, color = Color(0xFF94A3B8), fontSize = 12.sp)
+                        Text("•", color = Color(0xFF94A3B8), fontSize = 12.sp)
+                        if (isCareer) {
+                            Icon(Icons.Default.Work, contentDescription = null, tint = Color(0xFF45BD62), modifier = Modifier.size(12.dp))
+                            Text("Recruitment", color = Color(0xFF45BD62), fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                        } else if (isBuySell) {
+                            Icon(Icons.Default.Storefront, contentDescription = null, tint = Color(0xFFF7B928), modifier = Modifier.size(12.dp))
+                            Text("Marketplace", color = Color(0xFFF7B928), fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                        } else {
+                            Icon(Icons.Default.Groups, contentDescription = null, tint = Color(0xFF1877F2), modifier = Modifier.size(12.dp))
+                            Text("Group Post", color = Color(0xFF94A3B8), fontSize = 12.sp)
+                        }
                     }
                 }
-            }
 
-            // Buy & Sell Badge and Price
-            if (post.price != null) {
-                Spacer(modifier = Modifier.height(10.dp))
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        text = "${post.currency} ${post.price}",
-                        color = Color(0xFF45BD62),
-                        fontWeight = FontWeight.ExtraBold,
-                        fontSize = 20.sp
-                    )
-                    if (!post.condition.isNullOrBlank()) {
-                        Text(
-                            text = post.condition,
-                            color = Color(0xFFF7B928),
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.Bold
+                // 3-dots more menu
+                Box {
+                    IconButton(onClick = { showMoreMenu = true }) {
+                        Icon(Icons.Default.MoreVert, contentDescription = "More", tint = Color(0xFF94A3B8))
+                    }
+                    DropdownMenu(
+                        expanded = showMoreMenu,
+                        onDismissRequest = { showMoreMenu = false },
+                        modifier = Modifier.background(Color(0xFF1E293B))
+                    ) {
+                        if (onDelete != null) {
+                            DropdownMenuItem(
+                                text = { Text("Delete Post", color = Color(0xFFF3425F)) },
+                                leadingIcon = { Icon(Icons.Default.Delete, contentDescription = null, tint = Color(0xFFF3425F)) },
+                                onClick = {
+                                    showMoreMenu = false
+                                    onDelete()
+                                }
+                            )
+                        }
+                        DropdownMenuItem(
+                            text = { Text("Report Post", color = Color(0xFFF8FAFC)) },
+                            leadingIcon = { Icon(Icons.Default.Flag, contentDescription = null, tint = Color(0xFF94A3B8)) },
+                            onClick = {
+                                showMoreMenu = false
+                                Toast.makeText(context, "Post reported to group admins", Toast.LENGTH_SHORT).show()
+                            }
                         )
                     }
                 }
-                if (!post.location.isNullOrBlank()) {
-                    Text(
-                        text = "📍 ${post.location}",
-                        color = Color(0xFF94A3B8),
-                        fontSize = 12.sp
-                    )
-                }
             }
 
-            // Job / Careers Box
-            if (!post.jobTitle.isNullOrBlank()) {
-                Spacer(modifier = Modifier.height(10.dp))
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(12.dp))
-                        .background(Color(0xFF1E293B))
-                        .padding(12.dp)
-                ) {
-                    Column {
-                        Text(post.jobTitle, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 17.sp)
-                        if (!post.company.isNullOrBlank()) {
-                            Text("🏢 ${post.company}", color = Color(0xFF45BD62), fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+            // Category Feature: Careers / Recruitment (Job features & Apply button)
+            if (isCareer) {
+                Column(modifier = Modifier.padding(horizontal = 14.dp, vertical = 4.dp)) {
+                    // JOB POSTING badge
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(6.dp))
+                            .background(Color(0xFF45BD62).copy(alpha = 0.15f))
+                            .border(1.dp, Color(0xFF45BD62).copy(alpha = 0.3f), RoundedCornerShape(6.dp))
+                            .padding(horizontal = 8.dp, vertical = 3.dp)
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Default.Work, contentDescription = null, tint = Color(0xFF45BD62), modifier = Modifier.size(12.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("JOB POSTING", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = Color(0xFF45BD62))
                         }
-                        if (!post.salary.isNullOrBlank()) {
-                            Text("💰 ${post.salary}", color = Color(0xFFF7B928), fontSize = 13.sp)
-                        }
-                        if (!post.jobType.isNullOrBlank()) {
-                            Text("⏳ ${post.jobType}", color = Color(0xFF94A3B8), fontSize = 12.sp)
-                        }
+                    }
 
-                        if (!post.applicationValue.isNullOrBlank()) {
-                            Spacer(modifier = Modifier.height(10.dp))
-                            Button(
-                                onClick = {
-                                    Toast.makeText(context, "Applying via ${post.applicationValue}", Toast.LENGTH_LONG).show()
-                                },
-                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1877F2)),
-                                shape = RoundedCornerShape(10.dp),
-                                modifier = Modifier.fillMaxWidth()
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    // Job Details Card
+                    Card(
+                        shape = RoundedCornerShape(12.dp),
+                        colors = CardDefaults.cardColors(containerColor = Color(0xFF162137)),
+                        border = BorderStroke(1.dp, Color(0xFF1E293B)),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(modifier = Modifier.padding(14.dp)) {
+                            Text(
+                                text = post.jobTitle ?: "Job Opening",
+                                fontSize = 20.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Color(0xFFF8FAFC)
+                            )
+                            if (!post.company.isNullOrBlank()) {
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Icon(Icons.Default.Business, contentDescription = null, tint = Color(0xFF45BD62), modifier = Modifier.size(16.dp))
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text(post.company, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFFCBD5E1))
+                                }
+                            }
+
+                            Spacer(modifier = Modifier.height(8.dp))
+
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                                verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Text("Apply Now", fontWeight = FontWeight.Bold)
+                                if (!post.location.isNullOrBlank()) {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Icon(Icons.Default.LocationOn, contentDescription = null, tint = Color(0xFF45BD62), modifier = Modifier.size(14.dp))
+                                        Spacer(modifier = Modifier.width(3.dp))
+                                        Text(post.location, fontSize = 12.sp, color = Color(0xFF94A3B8))
+                                    }
+                                }
+                                if (!post.jobType.isNullOrBlank()) {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Icon(Icons.Default.Schedule, contentDescription = null, tint = Color(0xFFF7B928), modifier = Modifier.size(14.dp))
+                                        Spacer(modifier = Modifier.width(3.dp))
+                                        Text(post.jobType, fontSize = 12.sp, color = Color(0xFFF7B928), fontWeight = FontWeight.SemiBold)
+                                    }
+                                }
+                            }
+
+                            if (!post.salary.isNullOrBlank()) {
+                                Spacer(modifier = Modifier.height(6.dp))
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Icon(Icons.Default.AttachMoney, contentDescription = null, tint = Color(0xFF45BD62), modifier = Modifier.size(15.dp))
+                                    Spacer(modifier = Modifier.width(2.dp))
+                                    Text(post.salary, fontSize = 14.sp, fontWeight = FontWeight.Bold, color = Color(0xFF45BD62))
+                                }
+                            }
+
+                            // APPLY BUTTON: Only rendered if user attached an application method!
+                            if (hasApplicationMethod) {
+                                Spacer(modifier = Modifier.height(12.dp))
+                                Button(
+                                    onClick = {
+                                        try {
+                                            val appVal = post.applicationValue?.trim() ?: ""
+                                            val isEmail = post.applicationType == "email" || appVal.contains("@")
+                                            if (isEmail) {
+                                                val intent = Intent(Intent.ACTION_SENDTO, Uri.parse("mailto:$appVal")).apply {
+                                                    putExtra(Intent.EXTRA_SUBJECT, "Application for ${post.jobTitle ?: "Position"} at ${post.company ?: group.name}")
+                                                }
+                                                context.startActivity(intent)
+                                            } else {
+                                                val url = if (!appVal.startsWith("http://") && !appVal.startsWith("https://")) "https://$appVal" else appVal
+                                                val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url))
+                                                context.startActivity(intent)
+                                            }
+                                            Toast.makeText(context, "Opening application...", Toast.LENGTH_SHORT).show()
+                                        } catch (e: Exception) {
+                                            Toast.makeText(context, "Could not open application: ${post.applicationValue}", Toast.LENGTH_LONG).show()
+                                        }
+                                    },
+                                    shape = RoundedCornerShape(10.dp),
+                                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1877F2)),
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(46.dp)
+                                ) {
+                                    Icon(Icons.AutoMirrored.Filled.Send, contentDescription = null, modifier = Modifier.size(16.dp))
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text("Apply Now", fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                                }
                             }
                         }
                     }
                 }
             }
 
-            // Post Content
-            Spacer(modifier = Modifier.height(10.dp))
-            Text(post.content, color = Color(0xFFF8FAFC), fontSize = 15.sp, lineHeight = 22.sp)
+            // Category Feature: Buy & Sell (Price tag, condition, location)
+            if (isBuySell) {
+                Column(modifier = Modifier.padding(horizontal = 14.dp, vertical = 4.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "${post.currency} ${post.price ?: ""}",
+                            color = Color(0xFF45BD62),
+                            fontWeight = FontWeight.ExtraBold,
+                            fontSize = 22.sp
+                        )
+                        if (!post.condition.isNullOrBlank()) {
+                            Box(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(6.dp))
+                                    .background(Color(0xFFF7B928).copy(alpha = 0.15f))
+                                    .padding(horizontal = 8.dp, vertical = 3.dp)
+                            ) {
+                                Text(post.condition, color = Color(0xFFF7B928), fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                            }
+                        }
+                    }
+                    if (!post.location.isNullOrBlank()) {
+                        Spacer(modifier = Modifier.height(2.dp))
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Default.LocationOn, contentDescription = null, tint = Color(0xFFF7B928), modifier = Modifier.size(12.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(post.location, color = Color(0xFF94A3B8), fontSize = 12.sp)
+                        }
+                    }
+                }
+            }
 
-            // Images
+            // Text Content (with See More / See Less)
+            if (post.content.isNotBlank()) {
+                val words = remember(post.content) { post.content.trim().split("\\s+".toRegex()).filter { it.isNotEmpty() } }
+                val isLong = words.size > 25 || post.content.length > 180
+                val displayText = if (isExpandedText || !isLong) post.content else words.take(25).joinToString(" ") + "…"
+
+                Column(modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp)) {
+                    Text(
+                        text = displayText,
+                        color = Color(0xFFF8FAFC),
+                        fontSize = 16.sp,
+                        lineHeight = 23.sp
+                    )
+                    if (isLong) {
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = if (isExpandedText) "See Less" else "See More",
+                            color = Color(0xFF1877F2),
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 15.sp,
+                            modifier = Modifier
+                                .clickable { isExpandedText = !isExpandedText }
+                                .padding(vertical = 2.dp)
+                        )
+                    }
+                }
+            }
+
+            // Attached Media Grid
             if (post.imageUrls.isNotEmpty()) {
-                Spacer(modifier = Modifier.height(10.dp))
-                AsyncImage(
-                    model = post.imageUrls.first(),
-                    contentDescription = null,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(240.dp)
-                        .clip(RoundedCornerShape(12.dp)),
-                    contentScale = ContentScale.Crop
+                Spacer(modifier = Modifier.height(6.dp))
+                GroupMediaGrid(
+                    images = post.imageUrls,
+                    onImageClick = { idx -> onOpenGallery(post.imageUrls, idx) }
                 )
             }
 
-            Spacer(modifier = Modifier.height(12.dp))
-            Divider(color = Color(0xFF1E293B))
-            Spacer(modifier = Modifier.height(6.dp))
+            Spacer(modifier = Modifier.height(8.dp))
 
-            // Action row: Like, Comment, Share
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceAround
-            ) {
+            // Reactions / Discussions / Shares Summary Header
+            if (post.likesCount > 0 || post.commentsCount > 0 || post.sharesCount > 0) {
                 Row(
-                    verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier
-                        .clickable { onLike() }
-                        .padding(8.dp)
+                        .fillMaxWidth()
+                        .padding(horizontal = 14.dp, vertical = 6.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Icon(
-                        if (post.isLiked) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
-                        contentDescription = "Like",
-                        tint = if (post.isLiked) Color(0xFFF3425F) else Color(0xFF94A3B8)
-                    )
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text("${post.likesCount}", color = Color(0xFF94A3B8), fontSize = 13.sp)
-                }
+                    if (post.likesCount > 0) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.clickable(onClick = onOpenReactions)
+                        ) {
+                            Row(horizontalArrangement = Arrangement.spacedBy((-4).dp)) {
+                                Text("👍", fontSize = 14.sp)
+                                Text("❤️", fontSize = 14.sp)
+                            }
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                text = "${post.likesCount} Reactions",
+                                color = Color(0xFFF8FAFC),
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 13.sp
+                            )
+                        }
+                    } else {
+                        Spacer(modifier = Modifier.width(1.dp))
+                    }
 
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier
-                        .clickable { showCommentInput = !showCommentInput }
-                        .padding(8.dp)
-                ) {
-                    Icon(Icons.Default.ChatBubbleOutline, contentDescription = "Comments", tint = Color(0xFF94A3B8))
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text("${post.commentsCount}", color = Color(0xFF94A3B8), fontSize = 13.sp)
-                }
-
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier
-                        .clickable { onShare() }
-                        .padding(8.dp)
-                ) {
-                    Icon(Icons.Default.Share, contentDescription = "Share", tint = Color(0xFF94A3B8))
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text("${post.sharesCount}", color = Color(0xFF94A3B8), fontSize = 13.sp)
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        if (post.commentsCount > 0) {
+                            Text(
+                                text = "${post.commentsCount} Discussions",
+                                color = Color(0xFF94A3B8),
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.Medium,
+                                modifier = Modifier.clickable(onClick = onComment)
+                            )
+                        }
+                        if (post.commentsCount > 0 && post.sharesCount > 0) {
+                            Text("•", color = Color(0xFF94A3B8), fontSize = 13.sp)
+                        }
+                        if (post.sharesCount > 0) {
+                            Text(
+                                text = "${post.sharesCount} Shares",
+                                color = Color(0xFF94A3B8),
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.Medium,
+                                modifier = Modifier.clickable(onClick = onShare)
+                            )
+                        }
+                    }
                 }
             }
 
-            // Comment input box
-            if (showCommentInput) {
-                Spacer(modifier = Modifier.height(8.dp))
+            HorizontalDivider(color = Color(0xFF1E293B), thickness = 1.dp)
+
+            // Reactions Dock on Long Press (AnimatedVisibility)
+            AnimatedVisibility(
+                visible = showReactionDock,
+                enter = fadeIn() + expandVertically(),
+                exit = fadeOut() + shrinkVertically()
+            ) {
                 Row(
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 14.dp, vertical = 6.dp)
+                        .clip(RoundedCornerShape(24.dp))
+                        .background(Color(0xFF0B1120))
+                        .border(1.dp, Color(0xFF334155), RoundedCornerShape(24.dp))
+                        .padding(horizontal = 10.dp, vertical = 6.dp),
+                    horizontalArrangement = Arrangement.SpaceAround,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    OutlinedTextField(
-                        value = commentText,
-                        onValueChange = { commentText = it },
-                        modifier = Modifier.weight(1f),
-                        placeholder = { Text("Write a comment...", color = Color(0xFF64748B), fontSize = 13.sp) },
-                        colors = OutlinedTextFieldDefaults.colors(
-                            focusedContainerColor = Color(0xFF1E293B),
-                            unfocusedContainerColor = Color(0xFF1E293B),
-                            focusedTextColor = Color.White,
-                            unfocusedTextColor = Color.White,
-                            focusedBorderColor = Color(0xFF1877F2),
-                            unfocusedBorderColor = Color.Transparent
-                        ),
-                        shape = RoundedCornerShape(20.dp),
-                        singleLine = true
-                    )
-                    Spacer(modifier = Modifier.width(8.dp))
-                    IconButton(
-                        onClick = {
-                            if (commentText.isNotBlank()) {
-                                onComment(commentText)
-                                commentText = ""
+                    REACTION_EMOJIS.take(7).forEach { (type, emoji) ->
+                        Text(
+                            text = emoji,
+                            fontSize = 26.sp,
+                            modifier = Modifier
+                                .clip(CircleShape)
+                                .clickable {
+                                    onReact(type)
+                                    showReactionDock = false
+                                }
+                                .padding(4.dp)
+                        )
+                    }
+                }
+            }
+
+            // Action Buttons Row: React, Discuss, Share, Save (Matching Feed & Web)
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 14.dp, vertical = 8.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(16.dp)
+                ) {
+                    // React Button (Tap = like/unlike, Long-press = show dock)
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(8.dp))
+                            .pointerInput(post.id, showReactionDock) {
+                                detectTapGestures(
+                                    onLongPress = { showReactionDock = true },
+                                    onTap = {
+                                        if (showReactionDock) showReactionDock = false
+                                        else onLike()
+                                    }
+                                )
+                            }
+                            .padding(horizontal = 4.dp, vertical = 4.dp)
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            val reactionEmoji = post.myReaction?.let { getReactionEmoji(it) }
+                            if (reactionEmoji != null) {
+                                Text(text = reactionEmoji, fontSize = 20.sp)
+                            } else {
+                                Icon(
+                                    imageVector = if (post.isLiked) Icons.Filled.Favorite else Icons.Outlined.FavoriteBorder,
+                                    contentDescription = "Like",
+                                    tint = if (post.isLiked) Color(0xFFF43F5E) else Color(0xFFF8FAFC),
+                                    modifier = Modifier.size(22.dp)
+                                )
+                            }
+                            if (post.likesCount > 0) {
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(
+                                    text = formatCount(post.likesCount),
+                                    color = if (post.isLiked || post.myReaction != null) Color(0xFFF43F5E) else Color(0xFFF8FAFC),
+                                    fontSize = 14.sp,
+                                    fontWeight = FontWeight.SemiBold
+                                )
                             }
                         }
+                    }
+
+                    // Discuss Button
+                    DiscussButton(
+                        commentCount = post.commentsCount,
+                        onClick = onComment
+                    )
+
+                    // Share Button (Facing Northeast: ↗)
+                    Row(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(8.dp))
+                            .clickable(onClick = onShare)
+                            .padding(horizontal = 4.dp, vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Icon(Icons.Default.Send, contentDescription = "Send", tint = Color(0xFF1877F2))
+                        Icon(
+                            imageVector = Icons.Default.Send,
+                            contentDescription = "Share",
+                            tint = Color(0xFFF8FAFC),
+                            modifier = Modifier
+                                .size(20.dp)
+                                .graphicsLayer(rotationZ = -35f)
+                        )
+                        if (post.sharesCount > 0) {
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                text = formatCount(post.sharesCount),
+                                color = Color(0xFFF8FAFC),
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        }
                     }
                 }
 
-                // Render existing comments
-                if (post.comments.isNotEmpty()) {
-                    Spacer(modifier = Modifier.height(10.dp))
-                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        post.comments.takeLast(3).forEach { c ->
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clip(RoundedCornerShape(12.dp))
-                                    .background(Color(0xFF1E293B))
-                                    .padding(8.dp)
-                            ) {
-                                Text(c.author.name, color = Color(0xFF1877F2), fontWeight = FontWeight.Bold, fontSize = 12.sp)
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Text(c.text, color = Color(0xFFE2E8F0), fontSize = 12.sp)
+                // Save Post Button
+                IconButton(onClick = onSave) {
+                    Icon(
+                        imageVector = Icons.Outlined.BookmarkBorder,
+                        contentDescription = "Save",
+                        tint = Color(0xFF94A3B8),
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
+            }
+
+            // Comment Preview (Latest comment)
+            if (post.comments.isNotEmpty()) {
+                val latestComment = post.comments.last()
+                HorizontalDivider(color = Color(0xFF1E293B).copy(alpha = 0.5f), thickness = 1.dp)
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable(onClick = onComment)
+                        .padding(horizontal = 14.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.Top
+                ) {
+                    AsyncImage(
+                        model = latestComment.author.profileImageUrl.ifBlank { "https://ui-avatars.com/api/?name=${latestComment.author.name}" },
+                        contentDescription = latestComment.author.name,
+                        modifier = Modifier
+                            .size(32.dp)
+                            .clip(CircleShape),
+                        contentScale = ContentScale.Crop
+                    )
+                    Spacer(modifier = Modifier.width(10.dp))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(Color(0xFF162137))
+                                .padding(horizontal = 10.dp, vertical = 6.dp)
+                        ) {
+                            Column {
+                                Text(latestComment.author.name, color = Color(0xFFF8FAFC), fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                                Text(latestComment.text, color = Color(0xFFCBD5E1), fontSize = 13.sp)
                             }
+                        }
+                        Spacer(modifier = Modifier.height(2.dp))
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Text(latestComment.timestamp, color = Color(0xFF64748B), fontSize = 11.sp)
+                            Text("Reply", color = Color(0xFF94A3B8), fontSize = 11.sp, fontWeight = FontWeight.Bold, modifier = Modifier.clickable(onClick = onComment))
                         }
                     }
                 }
@@ -1641,6 +2325,7 @@ fun CreateGroupDialog(
 fun CreateGroupPostDialog(
     group: Group,
     currentUser: User,
+    autoPickPhotos: Boolean = false,
     onDismiss: () -> Unit,
     onSubmit: (String, List<String>, Double?, String, String?, String?, String, String?, String?, String?, String?, String?, String?) -> Unit
 ) {
@@ -1656,19 +2341,43 @@ fun CreateGroupPostDialog(
         }
     }
 
+    // Auto-launch picker if triggered from Photo/Video action
+    LaunchedEffect(autoPickPhotos) {
+        if (autoPickPhotos) {
+            photoPickerLauncher.launch(
+                PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+            )
+        }
+    }
+
     // Buy & Sell
     var priceStr by remember { mutableStateOf("") }
     var condition by remember { mutableStateOf("Used - Good") }
     var location by remember { mutableStateOf("") }
 
     // Recruitment
+    val isCareer = group.category == "recruitment" || isCareerCategory(group.category, group.name)
     var jobTitle by remember { mutableStateOf("") }
     var company by remember { mutableStateOf("") }
     var salary by remember { mutableStateOf("") }
-    var applicationValue by remember { mutableStateOf("") }
+    var jobLocation by remember { mutableStateOf("") }
     var jobType by remember { mutableStateOf("Full-time") }
+    var applicationType by remember { mutableStateOf<String?>(null) } // "email" or "link"
+    var applicationValue by remember { mutableStateOf("") }
 
-    val canPublish = content.isNotBlank() || selectedPhotos.isNotEmpty() || jobTitle.isNotBlank() || priceStr.isNotBlank()
+    val canPublish = content.isNotBlank() || selectedPhotos.isNotEmpty() || (isCareer && jobTitle.isNotBlank()) || (group.category == "buy_sell" && priceStr.isNotBlank())
+
+    val modalTitle = when {
+        group.category == "buy_sell" -> "Sell an Item"
+        isCareer -> "Post a Job Opening"
+        else -> "Create Group Post"
+    }
+
+    val submitButtonText = when {
+        group.category == "buy_sell" -> "List Item in Group"
+        isCareer -> "Post Job"
+        else -> "Post to Community"
+    }
 
     Dialog(
         onDismissRequest = onDismiss,
@@ -1683,7 +2392,7 @@ fun CreateGroupPostDialog(
             Card(
                 modifier = Modifier
                     .fillMaxWidth(0.92f)
-                    .fillMaxHeight(0.88f),
+                    .fillMaxHeight(0.90f),
                 shape = RoundedCornerShape(20.dp),
                 colors = CardDefaults.cardColors(containerColor = Color(0xFF0F172A)),
                 border = BorderStroke(1.dp, Color(0xFF1E293B))
@@ -1709,9 +2418,9 @@ fun CreateGroupPostDialog(
                             Spacer(modifier = Modifier.width(12.dp))
                             Column {
                                 Text(
-                                    text = currentUser.name,
+                                    text = modalTitle,
                                     fontWeight = FontWeight.Bold,
-                                    fontSize = 15.sp,
+                                    fontSize = 16.sp,
                                     color = Color(0xFFF8FAFC)
                                 )
                                 Text(
@@ -1752,7 +2461,7 @@ fun CreateGroupPostDialog(
                             .fillMaxWidth(),
                         verticalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
-                        // Category specific extra fields
+                        // Category specific extra fields: Buy & Sell
                         if (group.category == "buy_sell") {
                             item {
                                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -1805,13 +2514,15 @@ fun CreateGroupPostDialog(
                             }
                         }
 
-                        if (group.category == "recruitment") {
+                        // Category specific extra fields: Recruitment / Careers
+                        if (isCareer) {
                             item {
                                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                     OutlinedTextField(
                                         value = jobTitle,
                                         onValueChange = { jobTitle = it },
                                         label = { Text("Job Title", color = Color(0xFF94A3B8)) },
+                                        placeholder = { Text("e.g. Senior Frontend Engineer", color = Color(0xFF64748B)) },
                                         colors = OutlinedTextFieldDefaults.colors(
                                             focusedContainerColor = Color(0xFF0B1120),
                                             unfocusedContainerColor = Color(0xFF0B1120),
@@ -1827,6 +2538,7 @@ fun CreateGroupPostDialog(
                                         value = company,
                                         onValueChange = { company = it },
                                         label = { Text("Company Name", color = Color(0xFF94A3B8)) },
+                                        placeholder = { Text("Company name", color = Color(0xFF64748B)) },
                                         colors = OutlinedTextFieldDefaults.colors(
                                             focusedContainerColor = Color(0xFF0B1120),
                                             unfocusedContainerColor = Color(0xFF0B1120),
@@ -1838,10 +2550,50 @@ fun CreateGroupPostDialog(
                                         shape = RoundedCornerShape(12.dp),
                                         modifier = Modifier.fillMaxWidth()
                                     )
+
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                    ) {
+                                        OutlinedTextField(
+                                            value = jobType,
+                                            onValueChange = { jobType = it },
+                                            label = { Text("Job Type", color = Color(0xFF94A3B8)) },
+                                            colors = OutlinedTextFieldDefaults.colors(
+                                                focusedContainerColor = Color(0xFF0B1120),
+                                                unfocusedContainerColor = Color(0xFF0B1120),
+                                                focusedTextColor = Color(0xFFF8FAFC),
+                                                unfocusedTextColor = Color(0xFFF8FAFC),
+                                                focusedBorderColor = Color(0xFF1877F2),
+                                                unfocusedBorderColor = Color(0xFF1E293B)
+                                            ),
+                                            shape = RoundedCornerShape(12.dp),
+                                            modifier = Modifier.weight(1f)
+                                        )
+
+                                        OutlinedTextField(
+                                            value = salary,
+                                            onValueChange = { salary = it },
+                                            label = { Text("Salary Range", color = Color(0xFF94A3B8)) },
+                                            placeholder = { Text("e.g. $70k - $90k", color = Color(0xFF64748B)) },
+                                            colors = OutlinedTextFieldDefaults.colors(
+                                                focusedContainerColor = Color(0xFF0B1120),
+                                                unfocusedContainerColor = Color(0xFF0B1120),
+                                                focusedTextColor = Color(0xFFF8FAFC),
+                                                unfocusedTextColor = Color(0xFFF8FAFC),
+                                                focusedBorderColor = Color(0xFF1877F2),
+                                                unfocusedBorderColor = Color(0xFF1E293B)
+                                            ),
+                                            shape = RoundedCornerShape(12.dp),
+                                            modifier = Modifier.weight(1f)
+                                        )
+                                    }
+
                                     OutlinedTextField(
-                                        value = salary,
-                                        onValueChange = { salary = it },
-                                        label = { Text("Salary Range (e.g. $40,000 - $60,000)", color = Color(0xFF94A3B8)) },
+                                        value = jobLocation,
+                                        onValueChange = { jobLocation = it },
+                                        label = { Text("Job Location", color = Color(0xFF94A3B8)) },
+                                        placeholder = { Text("e.g. San Francisco, CA / Remote", color = Color(0xFF64748B)) },
                                         colors = OutlinedTextFieldDefaults.colors(
                                             focusedContainerColor = Color(0xFF0B1120),
                                             unfocusedContainerColor = Color(0xFF0B1120),
@@ -1853,21 +2605,120 @@ fun CreateGroupPostDialog(
                                         shape = RoundedCornerShape(12.dp),
                                         modifier = Modifier.fillMaxWidth()
                                     )
-                                    OutlinedTextField(
-                                        value = applicationValue,
-                                        onValueChange = { applicationValue = it },
-                                        label = { Text("Application Email / Link", color = Color(0xFF94A3B8)) },
-                                        colors = OutlinedTextFieldDefaults.colors(
-                                            focusedContainerColor = Color(0xFF0B1120),
-                                            unfocusedContainerColor = Color(0xFF0B1120),
-                                            focusedTextColor = Color(0xFFF8FAFC),
-                                            unfocusedTextColor = Color(0xFFF8FAFC),
-                                            focusedBorderColor = Color(0xFF1877F2),
-                                            unfocusedBorderColor = Color(0xFF1E293B)
-                                        ),
+
+                                    // Application Method: Email or Link
+                                    Spacer(modifier = Modifier.height(4.dp))
+                                    Card(
+                                        colors = CardDefaults.cardColors(containerColor = Color(0xFF162137)),
                                         shape = RoundedCornerShape(12.dp),
+                                        border = BorderStroke(1.dp, Color(0xFF1E293B)),
                                         modifier = Modifier.fillMaxWidth()
-                                    )
+                                    ) {
+                                        Column(modifier = Modifier.padding(12.dp)) {
+                                            Text(
+                                                text = "How can candidates apply?",
+                                                fontSize = 13.sp,
+                                                fontWeight = FontWeight.SemiBold,
+                                                color = Color(0xFFF8FAFC)
+                                            )
+                                            Text(
+                                                text = "Optional — if left empty, Apply button is hidden",
+                                                fontSize = 11.sp,
+                                                color = Color(0xFF64748B),
+                                                modifier = Modifier.padding(bottom = 8.dp)
+                                            )
+
+                                            Row(
+                                                modifier = Modifier.fillMaxWidth(),
+                                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                            ) {
+                                                Button(
+                                                    onClick = { applicationType = "email" },
+                                                    colors = ButtonDefaults.buttonColors(
+                                                        containerColor = if (applicationType == "email") Color(0xFF1877F2).copy(alpha = 0.25f) else Color(0xFF0B1120),
+                                                        contentColor = if (applicationType == "email") Color(0xFF38BDF8) else Color(0xFF94A3B8)
+                                                    ),
+                                                    border = BorderStroke(1.dp, if (applicationType == "email") Color(0xFF38BDF8) else Color(0xFF1E293B)),
+                                                    shape = RoundedCornerShape(10.dp),
+                                                    modifier = Modifier.weight(1f)
+                                                ) {
+                                                    Icon(Icons.Default.Email, contentDescription = null, modifier = Modifier.size(16.dp))
+                                                    Spacer(modifier = Modifier.width(6.dp))
+                                                    Text("By Email", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                                                }
+
+                                                Button(
+                                                    onClick = { applicationType = "link" },
+                                                    colors = ButtonDefaults.buttonColors(
+                                                        containerColor = if (applicationType == "link") Color(0xFF1877F2).copy(alpha = 0.25f) else Color(0xFF0B1120),
+                                                        contentColor = if (applicationType == "link") Color(0xFF38BDF8) else Color(0xFF94A3B8)
+                                                    ),
+                                                    border = BorderStroke(1.dp, if (applicationType == "link") Color(0xFF38BDF8) else Color(0xFF1E293B)),
+                                                    shape = RoundedCornerShape(10.dp),
+                                                    modifier = Modifier.weight(1f)
+                                                ) {
+                                                    Icon(Icons.Default.Link, contentDescription = null, modifier = Modifier.size(16.dp))
+                                                    Spacer(modifier = Modifier.width(6.dp))
+                                                    Text("By External Link", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                                                }
+                                            }
+
+                                            if (applicationType == "email") {
+                                                Spacer(modifier = Modifier.height(8.dp))
+                                                OutlinedTextField(
+                                                    value = applicationValue,
+                                                    onValueChange = { applicationValue = it },
+                                                    label = { Text("Application Email Address", color = Color(0xFF94A3B8), fontSize = 12.sp) },
+                                                    placeholder = { Text("e.g. jobs@company.com", color = Color(0xFF64748B)) },
+                                                    colors = OutlinedTextFieldDefaults.colors(
+                                                        focusedContainerColor = Color(0xFF0B1120),
+                                                        unfocusedContainerColor = Color(0xFF0B1120),
+                                                        focusedTextColor = Color(0xFFF8FAFC),
+                                                        unfocusedTextColor = Color(0xFFF8FAFC),
+                                                        focusedBorderColor = Color(0xFF1877F2),
+                                                        unfocusedBorderColor = Color(0xFF1E293B)
+                                                    ),
+                                                    shape = RoundedCornerShape(10.dp),
+                                                    modifier = Modifier.fillMaxWidth()
+                                                )
+                                            }
+
+                                            if (applicationType == "link") {
+                                                Spacer(modifier = Modifier.height(8.dp))
+                                                OutlinedTextField(
+                                                    value = applicationValue,
+                                                    onValueChange = { applicationValue = it },
+                                                    label = { Text("Application Website / Careers URL", color = Color(0xFF94A3B8), fontSize = 12.sp) },
+                                                    placeholder = { Text("e.g. https://company.com/careers/apply", color = Color(0xFF64748B)) },
+                                                    colors = OutlinedTextFieldDefaults.colors(
+                                                        focusedContainerColor = Color(0xFF0B1120),
+                                                        unfocusedContainerColor = Color(0xFF0B1120),
+                                                        focusedTextColor = Color(0xFFF8FAFC),
+                                                        unfocusedTextColor = Color(0xFFF8FAFC),
+                                                        focusedBorderColor = Color(0xFF1877F2),
+                                                        unfocusedBorderColor = Color(0xFF1E293B)
+                                                    ),
+                                                    shape = RoundedCornerShape(10.dp),
+                                                    modifier = Modifier.fillMaxWidth()
+                                                )
+                                            }
+
+                                            if (applicationType != null) {
+                                                Spacer(modifier = Modifier.height(6.dp))
+                                                Text(
+                                                    text = "Remove application method (hide Apply button)",
+                                                    fontSize = 11.sp,
+                                                    color = Color(0xFF94A3B8),
+                                                    modifier = Modifier
+                                                        .align(Alignment.End)
+                                                        .clickable {
+                                                            applicationType = null
+                                                            applicationValue = ""
+                                                        }
+                                                )
+                                            }
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -1879,10 +2730,10 @@ fun CreateGroupPostDialog(
                                 onValueChange = { content = it },
                                 placeholder = {
                                     Text(
-                                        text = when (group.category) {
-                                            "buy_sell" -> "Describe the item you are selling..."
-                                            "recruitment" -> "Describe the job requirements and responsibilities..."
-                                            else -> "What's on your mind?"
+                                        text = when {
+                                            group.category == "buy_sell" -> "Describe the item you are selling..."
+                                            isCareer -> "Describe the role, responsibilities, requirements, qualifications, and how to apply..."
+                                            else -> "What's on your mind? Share thoughts, ask questions, or contribute to ${group.name}..."
                                         },
                                         color = Color(0xFF64748B),
                                         fontSize = 15.sp
@@ -2058,20 +2909,22 @@ fun CreateGroupPostDialog(
                                 if (canPublish) {
                                     val photoUriStrings = selectedPhotos.map { it.toString() }
                                     val parsedPrice = priceStr.toDoubleOrNull()
+                                    val finalAppType = if (applicationValue.isNotBlank()) (applicationType ?: if (applicationValue.contains("@")) "email" else "link") else null
+                                    val finalAppVal = applicationValue.ifBlank { null }
                                     onSubmit(
                                         content.trim(),
                                         photoUriStrings,
                                         parsedPrice,
                                         "USD",
                                         condition.ifBlank { null },
-                                        location.ifBlank { null },
+                                        if (isCareer) jobLocation.ifBlank { null } else location.ifBlank { null },
                                         "available",
                                         jobTitle.ifBlank { null },
                                         company.ifBlank { null },
                                         jobType,
                                         salary.ifBlank { null },
-                                        if (applicationValue.isNotBlank()) "email" else null,
-                                        applicationValue.ifBlank { null }
+                                        finalAppType,
+                                        finalAppVal
                                     )
                                 }
                             },
@@ -2086,7 +2939,7 @@ fun CreateGroupPostDialog(
                                 .height(46.dp)
                         ) {
                             Text(
-                                text = "Publish Post",
+                                text = submitButtonText,
                                 fontWeight = FontWeight.Bold,
                                 color = if (canPublish) Color.White else Color(0xFF64748B)
                             )
